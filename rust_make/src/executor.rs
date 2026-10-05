@@ -48,6 +48,8 @@ pub struct ExecutionStats {
 #[derive(Debug, Clone)]
 pub enum ExecutionError {
     BuildFailed(String, i32),
+    /// -k: the goals' "not remade" lines are already printed.
+    NotRemade,
     NoRuleToMake(String),
     CommandSpawnFailed(String, String),
 }
@@ -58,6 +60,7 @@ impl std::fmt::Display for ExecutionError {
             Self::BuildFailed(target, code) => {
                 write!(f, "make: *** [{target}] Error {code}")
             }
+            Self::NotRemade => Ok(()),
             Self::NoRuleToMake(target) => {
                 write!(f, "make: *** No rule to make target '{target}'. Stop.")
             }
@@ -69,6 +72,68 @@ impl std::fmt::Display for ExecutionError {
 }
 
 impl std::error::Error for ExecutionError {}
+
+/// The phony root maked builds when several goals are given.
+pub const GOALS_ROOT: &str = ".MAKED_GOALS";
+
+/// -t for one target with a recipe, as GNU make does it (remake.c,
+/// notice_finished_file): lines with `+` or `$(MAKE)` run and the others
+/// are skipped, then the target is touched only if
+/// some line is not recursive. Under -n the touch is printed, not done.
+/// Returns whether anything ran or was touched, or the first failure.
+fn touch_target(
+    rule: &crate::ast::Rule,
+    target: &str,
+    makefile: &Makefile,
+    config: &ExecutionConfig,
+    env: &crate::ast::RecipeEnv,
+    makeflags: &str,
+    out: &mut Vec<String>,
+) -> Result<bool, ExecutionError> {
+    let recursive = |raw: &str| recipe_prefixes(raw).3 || mentions_make(raw);
+    let mut did = false;
+    if rule.commands.iter().any(|c| recursive(c)) {
+        for raw in &rule.commands {
+            let (cmd_str, s1, i1, f1) = recipe_prefixes(raw);
+            let expanded = expand_variables(cmd_str, makefile, Some(target), &rule.prereqs);
+            let (cmd, s2, i2, f2) = recipe_prefixes(&expanded);
+            if cmd.trim().is_empty() {
+                continue;
+            }
+            // Other lines are skipped, not even printed, -n or not.
+            if !(f1 || f2 || mentions_make(raw)) {
+                continue;
+            }
+            if config.dry_run || !(config.silent || s1 || s2) {
+                println!("{cmd}");
+            }
+            did = true;
+            let status = run_command_status_fast(cmd, Some(makeflags), env)
+                .map_err(|e| ExecutionError::CommandSpawnFailed(cmd.to_string(), e.to_string()))?;
+            if !status.success() {
+                let code = status.code().unwrap_or(1);
+                if config.ignore_errors || i1 || i2 {
+                    if !config.silent {
+                        eprintln!("make: [{target}] Error {code} (ignored)");
+                    }
+                } else {
+                    return Err(ExecutionError::BuildFailed(target.to_string(), code));
+                }
+            }
+        }
+    }
+    // Phony targets run their `+` lines but are never touched.
+    if !rule.is_phony && rule.commands.iter().any(|c| !recursive(c)) {
+        if !config.silent {
+            out.push(format!("touch {target}"));
+        }
+        if !config.dry_run {
+            touch_file(target);
+        }
+        did = true;
+    }
+    Ok(did)
+}
 
 #[derive(Debug, Clone)]
 enum TargetStatus {
@@ -91,6 +156,11 @@ pub struct Executor<'a> {
     /// Targets finished by an earlier run of this process (remaking the
     /// makefiles), which later runs take as done, as GNU make does.
     settled: Mutex<crate::fxhash::FxHashMap<String, TargetStatus>>,
+    /// Targets whose recipe ran (or, under -n, was printed): GNU make says
+    /// "Nothing to be done" for a goal only when none ran for it.
+    ran: Mutex<Vec<String>>,
+    /// -k: goals reported as "not remade because of errors".
+    not_remade: Mutex<Vec<String>>,
 }
 
 /// Targets one executor finished, handed to the next with
@@ -469,6 +539,8 @@ impl<'a> Executor<'a> {
             recipe_env: Arc::new(makefile.recipe_env()),
             tui,
             settled: Mutex::new(Default::default()),
+            ran: Mutex::new(Vec::new()),
+            not_remade: Mutex::new(Vec::new()),
         }
     }
 
@@ -476,6 +548,34 @@ impl<'a> Executor<'a> {
     pub fn with_settled(self, settled: SettledTargets) -> Self {
         *self.settled.lock().unwrap() = settled.0;
         self
+    }
+
+    /// Targets whose recipe ran (or was printed under -n), in order.
+    pub fn ran_targets(&self) -> Vec<String> {
+        self.ran.lock().unwrap().clone()
+    }
+
+    /// -k: print "Target 'X' not remade because of errors." for each failed
+    /// goal (never for maked's own GOALS_ROOT).
+    fn report_not_remade(&self, root: &str, failed: impl Fn(&str) -> bool) {
+        let goals: Vec<String> = if root == GOALS_ROOT {
+            self.makefile
+                .rules
+                .get(root)
+                .map(|r| r.prereqs.clone())
+                .unwrap_or_default()
+        } else {
+            vec![root.to_string()]
+        };
+        for g in goals.iter().filter(|g| failed(g)) {
+            eprintln!("make: Target '{g}' not remade because of errors.");
+            self.not_remade.lock().unwrap().push(g.clone());
+        }
+    }
+
+    /// -k: the goals that were not remade because of errors.
+    pub fn not_remade_goals(&self) -> Vec<String> {
+        self.not_remade.lock().unwrap().clone()
     }
 
     /// The targets this executor has finished so far.
@@ -506,18 +606,25 @@ impl<'a> Executor<'a> {
         };
 
         let result = self.doname(root, &mut target_statuses, &mut stats);
-        self.settled.lock().unwrap().extend(
-            target_statuses
-                .into_iter()
-                .filter(|(_, st)| !matches!(st, TargetStatus::Failed)),
-        );
+        if self.config.keep_going && matches!(result, Ok(TargetStatus::Failed)) {
+            self.report_not_remade(root, |g| {
+                !matches!(
+                    target_statuses.get(g),
+                    Some(TargetStatus::UpToDate(_) | TargetStatus::Rebuilt(_))
+                )
+            });
+        }
+        // Failures are remembered too: with -k and several goals, a target
+        // that failed for one goal is not run again for the next (GNU make).
+        self.settled.lock().unwrap().extend(target_statuses);
         let status = result?;
         if matches!(status, TargetStatus::Failed) {
             self.save_duration_log();
-            if self.config.keep_going {
-                eprintln!("make: Target '{root}' not remade because of errors.");
-            }
-            return Err(ExecutionError::BuildFailed(root.to_string(), 1));
+            return Err(if self.config.keep_going {
+                ExecutionError::NotRemade
+            } else {
+                ExecutionError::BuildFailed(root.to_string(), 1)
+            });
         }
         if self.config.use_hash && !self.config.dry_run {
             let _ = self
@@ -666,15 +773,35 @@ impl<'a> Executor<'a> {
                     return Ok(TargetStatus::Rebuilt(SystemTime::now()));
                 }
 
-                if self.config.touch_only && (rule.commands.is_empty() || rule.is_phony) {
+                if self.config.touch_only
+                    && (rule.commands.is_empty()
+                        || rule.is_phony
+                            && !rule
+                                .commands
+                                .iter()
+                                .any(|c| recipe_prefixes(c).3 || mentions_make(c)))
+                {
                     return Ok(TargetStatus::Rebuilt(SystemTime::now()));
                 }
                 if self.config.touch_only {
-                    if !self.config.silent {
-                        println!("touch {target}");
+                    let mut out = Vec::new();
+                    let mf = self
+                        .jobserver
+                        .child_makeflags(&std::env::var("MAKEFLAGS").unwrap_or_default());
+                    let did = touch_target(
+                        &rule,
+                        target,
+                        self.makefile,
+                        &self.config,
+                        &self.recipe_env,
+                        &mf,
+                        &mut out,
+                    )?;
+                    out.iter().for_each(|l| println!("{l}"));
+                    if did {
+                        self.ran.lock().unwrap().push(target.to_string());
+                        stats.commands_executed += 1;
                     }
-                    touch_file(target);
-                    stats.commands_executed += 1;
                     stats.targets_rebuilt += 1;
                     return Ok(TargetStatus::Rebuilt(SystemTime::now()));
                 }
@@ -759,6 +886,12 @@ impl<'a> Executor<'a> {
                             if cmd.trim().is_empty() {
                                 continue;
                             }
+                            {
+                                let mut ran = self.ran.lock().unwrap();
+                                if ran.last().map(String::as_str) != Some(target) {
+                                    ran.push(target.to_string());
+                                }
+                            }
                             let cmd = cmd.to_string();
                             let force = f1 || f2 || mentions_make(raw_cmd);
                             let run = !self.config.dry_run || force;
@@ -781,6 +914,10 @@ impl<'a> Executor<'a> {
                                     ExecutionError::CommandSpawnFailed(cmd.clone(), e.to_string())
                                 })?;
 
+                                if !status.success() && ignore_err && !self.config.silent {
+                                    let code = status.code().unwrap_or(1);
+                                    eprintln!("make: [{target}] Error {code} (ignored)");
+                                }
                                 if !status.success() && !ignore_err {
                                     let code = status.code().unwrap_or(1);
                                     statuses.insert(target.to_string(), TargetStatus::Failed);
@@ -932,6 +1069,7 @@ impl<'a> Executor<'a> {
                 let tracer_clone = self.tracer.clone();
                 let remote_pool_clone = Arc::clone(&self.remote_pool);
                 let recipe_env_clone = Arc::clone(&self.recipe_env);
+                let ran_clone = &self.ran;
                 let tui_clone = self.tui.clone();
                 let worker_num = (worker_id + 1) as u32;
 
@@ -1090,13 +1228,37 @@ impl<'a> Executor<'a> {
                                 rule_start = Instant::now();
 
                                 if config.touch_only {
-                                    // Only files with a recipe are touched.
-                                    if !rule.commands.is_empty() && !rule.is_phony {
-                                        if !config.silent {
-                                            output_lines.push(format!("touch {task}"));
+                                    // GNU make's -t (see `touch_target`).
+                                    if !rule.commands.is_empty() {
+                                        let mf = jobserver_clone.child_makeflags(
+                                            &std::env::var("MAKEFLAGS").unwrap_or_default(),
+                                        );
+                                        match touch_target(
+                                            &rule,
+                                            &task,
+                                            makefile,
+                                            &config,
+                                            &recipe_env_clone,
+                                            &mf,
+                                            &mut output_lines,
+                                        ) {
+                                            Ok(true) => {
+                                                ran_clone.lock().unwrap().push(task.clone());
+                                                num_commands_clone.fetch_add(1, Ordering::Relaxed);
+                                            }
+                                            Ok(false) => {}
+                                            Err(e) => {
+                                                // As a failed recipe: without -k
+                                                // the coordinator stops on it.
+                                                if config.keep_going {
+                                                    eprintln!("{e}");
+                                                } else {
+                                                    *failed_error_clone.lock().unwrap() = Some(e);
+                                                    abort_flag_clone.store(true, Ordering::Relaxed);
+                                                }
+                                                build_failed = true;
+                                            }
                                         }
-                                        touch_file(&task);
-                                        num_commands_clone.fetch_add(1, Ordering::Relaxed);
                                     }
                                 } else {
                                     let mut restored_from_cache = false;
@@ -1195,6 +1357,12 @@ impl<'a> Executor<'a> {
                                                 if cmd.trim().is_empty() {
                                                     continue;
                                                 }
+                                                {
+                                                    let mut ran = ran_clone.lock().unwrap();
+                                                    if !ran.iter().rev().take(8).any(|t| t == &task) {
+                                                        ran.push(task.clone());
+                                                    }
+                                                }
                                                 let cmd = cmd.to_string();
                                                 let force = f1 || f2 || mentions_make(raw_cmd);
                                                 let run = !config.dry_run || force;
@@ -1233,6 +1401,15 @@ impl<'a> Executor<'a> {
                                                                     )
                                                                     .trim_end()
                                                                     .to_string(),
+                                                                );
+                                                            }
+                                                            if !out.status.success()
+                                                                && ignore_err
+                                                                && !config.silent
+                                                            {
+                                                                eprintln!(
+                                                                    "make: [{task}] Error {} (ignored)",
+                                                                    out.status.code().unwrap_or(1)
                                                                 );
                                                             }
                                                             if !out.status.success() && !ignore_err
@@ -1525,8 +1702,14 @@ impl<'a> Executor<'a> {
         }
         if any_failed {
             self.save_duration_log();
-            eprintln!("make: Target '{root}' not remade because of errors.");
-            return Err(ExecutionError::BuildFailed(root.to_string(), 1));
+            let statuses = target_statuses.lock().unwrap();
+            self.report_not_remade(root, |g| {
+                !matches!(
+                    statuses.get(g),
+                    Some(TargetStatus::UpToDate(_) | TargetStatus::Rebuilt(_))
+                )
+            });
+            return Err(ExecutionError::NotRemade);
         }
 
         let rebuilt = num_rebuilt.load(Ordering::Relaxed);

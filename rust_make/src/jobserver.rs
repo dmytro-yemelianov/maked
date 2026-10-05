@@ -228,10 +228,12 @@ impl JobServer {
     /// flags and command-line variables `main` registered with
     /// `set_makeflags_base`; without them, extends `current`.
     pub fn child_makeflags(&self, current: &str) -> String {
-        let jobs = self
-            .auth_str
-            .as_ref()
-            .map(|auth| format!("-j{} --jobserver-auth={auth}", self.jobs));
+        // Without a jobserver (-n), GNU make still passes -jN down.
+        let jobs = match self.auth_str.as_ref() {
+            Some(auth) => Some(format!("-j{} --jobserver-auth={auth}", self.jobs)),
+            None if self.jobs > 1 => Some(format!("-j{}", self.jobs)),
+            None => None,
+        };
         if let Some((letters, vars)) = MAKEFLAGS_BASE.get() {
             let mut parts: Vec<String> = Vec::new();
             if !letters.is_empty() {

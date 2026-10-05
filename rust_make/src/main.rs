@@ -270,10 +270,23 @@ fn real_main() -> ExitCode {
                 letters.push(c);
             }
         }
-        let vars = cli_vars
+        let vars: Vec<String> = cli_vars
             .iter()
             .map(|(k, v)| maked::jobserver::escape_makeflags_word(&format!("{k}={v}")))
             .collect();
+        // $(MAKEFLAGS) in this makefile shows this make's own flags (GNU
+        // make), not only the inherited ones; children get them too.
+        let mut own = letters.clone();
+        if jobs > 1 {
+            own = format!("{own} -j{jobs}").trim().to_string();
+        }
+        if !vars.is_empty() {
+            own = format!("{own} -- {}", vars.join(" ")).trim().to_string();
+        }
+        if !own.is_empty() {
+            // SAFETY: no other thread exists yet.
+            unsafe { env::set_var("MAKEFLAGS", own) };
+        }
         maked::jobserver::set_makeflags_base(letters, vars);
     }
 
@@ -563,7 +576,7 @@ fn real_main() -> ExitCode {
     // Several goals are built in one run, so a prerequisite they share is
     // made once (GNU make does the same); a hidden phony root lists them in
     // command-line order.
-    const GOALS_ROOT: &str = ".MAKED_GOALS";
+    use maked::executor::GOALS_ROOT;
     // A goal named twice is built once; the repeat reports "up to date".
     let mut unique_goals: Vec<String> = Vec::new();
     let mut repeated_goals: Vec<String> = Vec::new();
@@ -574,7 +587,15 @@ fn real_main() -> ExitCode {
             unique_goals.push(g.clone());
         }
     }
-    let run_targets: Vec<String> = if unique_goals.len() > 1 {
+    // Several goals: GNU make updates them one after another, saying "up to
+    // date" for each as it goes; with -j1 so does maked, sharing what is
+    // already done between goals. With -j they are built together under
+    // one root, and each target that ran counts for the first goal that
+    // reaches it.
+    let goals_in_turn = jobs <= 1 && targets_to_build.len() > 1;
+    let run_targets: Vec<String> = if goals_in_turn {
+        targets_to_build.clone()
+    } else if unique_goals.len() > 1 {
         makefile.rules.insert(
             GOALS_ROOT.to_string(),
             maked::ast::Rule {
@@ -620,7 +641,27 @@ fn real_main() -> ExitCode {
         unsafe { env::remove_var("MAKE_RESTARTS") };
     }
 
+    // Built together (-j): each target that ran counts for the first goal
+    // that reaches it; a goal with none (and not failed) had nothing done.
+    let goals_with_nothing_done = |executor: &Executor, failed: &[String]| -> Vec<String> {
+        let ran: std::collections::HashSet<String> = executor.ran_targets().into_iter().collect();
+        let mut claimed: std::collections::HashSet<String> = Default::default();
+        let mut quiet = Vec::new();
+        for goal in &unique_goals {
+            let reach = graph.reachable_subgraph(&makefile, goal);
+            let any = reach
+                .iter()
+                .any(|t| ran.contains(t) && !claimed.contains(t));
+            claimed.extend(reach.into_iter());
+            if !any && !failed.contains(goal) {
+                quiet.push(goal.clone());
+            }
+        }
+        quiet
+    };
+    let mut failed = false;
     for tgt in &run_targets {
+        let ran_before = executor.ran_targets().len();
         match executor.execute(tgt) {
             Ok(stats) => {
                 if question && stats.targets_rebuilt > 0 {
@@ -628,11 +669,19 @@ fn real_main() -> ExitCode {
                 }
 
                 // GNU make's messages when no recipe ran for a goal.
-                let quiet_goals: &[String] = if stats.commands_executed == 0 {
-                    &targets_to_build
+                let mut quiet: Vec<String> = Vec::new();
+                if goals_in_turn || run_targets.len() == 1 && tgt != GOALS_ROOT {
+                    if executor.ran_targets().len() == ran_before {
+                        quiet.push(tgt.clone());
+                    }
+                    if !goals_in_turn {
+                        quiet.extend(repeated_goals.iter().cloned());
+                    }
                 } else {
-                    &repeated_goals
-                };
+                    quiet = goals_with_nothing_done(&executor, &[]);
+                    quiet.extend(repeated_goals.iter().cloned());
+                }
+                let quiet_goals: &[String] = &quiet;
                 if !silent && !question {
                     for goal in quiet_goals {
                         // "is up to date" means the goal needed nothing; a
@@ -697,11 +746,38 @@ fn real_main() -> ExitCode {
                 }
             }
             Err(e) => {
-                eprintln!("{e}");
-                // GNU make exits 2 when a build fails.
+                let msg = e.to_string();
+                if !msg.is_empty() {
+                    eprintln!("{msg}");
+                }
+                // -k -j: the goals that were fine still get their message.
+                if tgt == GOALS_ROOT
+                    && matches!(e, maked::executor::ExecutionError::NotRemade)
+                    && !silent
+                {
+                    for goal in goals_with_nothing_done(&executor, &executor.not_remade_goals()) {
+                        let up_to_date = makefile
+                            .get_rule(&goal)
+                            .is_some_and(|r| !r.commands.is_empty() && !r.is_phony);
+                        if up_to_date {
+                            println!("{prog}: '{goal}' is up to date.");
+                        } else {
+                            println!("{prog}: Nothing to be done for '{goal}'.");
+                        }
+                    }
+                }
+                // GNU make exits 2 when a build fails; with -k it goes on
+                // to the next goal first.
+                if keep_going && goals_in_turn {
+                    failed = true;
+                    continue;
+                }
                 return ExitCode::from(2);
             }
         }
+    }
+    if failed {
+        return ExitCode::from(2);
     }
 
     ExitCode::SUCCESS

@@ -516,6 +516,38 @@ fn included_makefiles_are_remade_and_reread() {
 }
 
 #[test]
+fn touch_dry_run_goals_in_turn_and_sub_make_flags() {
+    // Found by benchmarks/fuzzer/options_fuzz.py.
+    // (A recipe mixing `+` and plain lines is left out: GNU make 4.4 then
+    // prints "touch X" twice.)
+    let mf = "t1: t2 t6\n\t+echo t1 plus\n\
+              t2:\n\t@echo t2\nt6:\n\t@echo t6 plain\n\
+              t3:\n\t$(MAKE) -s --no-print-directory -f sub.mk sub\n\
+              t4: t5\n\t@echo t4\nt5:\n\tfalse\n\
+              up: ; @:\n";
+    let files = [
+        ("Makefile", mf),
+        (
+            "sub.mk",
+            "sub:\n\t@echo sub $(filter-out --%,$(MAKEFLAGS))\n",
+        ),
+        ("up", ""),
+    ];
+    for args in [
+        &["-t", "t1"][..],
+        &["-n", "-t", "t1"],
+        &["-n", "t1", "up", "t1"],
+        &["up", "t1", "up"],
+        &["-k", "t4", "up", "t4"],
+        &["-k", "-i", "t4"],
+        &["-e", "t3"],
+        &["-n", "-t", "t3"],
+    ] {
+        assert_same(&files, args);
+    }
+}
+
+#[test]
 fn variable_flavors_overrides_and_target_specific_inheritance() {
     // Found by benchmarks/fuzzer/directive_fuzz.py.
     let mf = "S := s\nS += $(LATE)\nLATE = late\nR = r\nR += $(LATE)\n\
