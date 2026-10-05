@@ -6,6 +6,7 @@ pub mod executor;
 pub mod freshness;
 pub mod graph;
 pub mod hash;
+pub mod history;
 pub mod jobserver;
 pub mod ninja;
 pub mod parser;

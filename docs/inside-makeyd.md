@@ -1,6 +1,6 @@
 # Inside makeyd: a make in Rust, a model in Lean, and the benchmark that lied
 
-*Dmytro Yemelianov · October 2026 · [makeyd v0.1.1](https://github.com/dmytro-yemelianov/makeyd/releases/tag/v0.1.1)*
+*Dmytro Yemelianov · October 2026 · [makeyd v0.1.2](https://github.com/dmytro-yemelianov/makeyd/releases/tag/v0.1.2)*
 
 makeyd ("make by Yemelianov Dmytro") is a POSIX make (IEEE Std 1003.1) with
 the GNU extensions people actually use. It is written in Rust with zero
@@ -113,7 +113,7 @@ lines across seven modules:
 - `Scheduling`: `-jN` schedules and how good a greedy scheduler is;
 - `Theorems`: the proofs.
 
-There are **49 theorems** (19 of them in `Scheduling`, mostly lemmas about
+There are **52 theorems** (22 of them in `Scheduling`, mostly lemmas about
 finite sums), all kernel-checked, with no `sorry` and no `admit`. CI fails
 if either word appears, and also if `#print axioms` shows a headline theorem
 depending on `sorryAx`. They fall into five groups:
@@ -187,9 +187,49 @@ because every compile slows down when more of them share the CPU (the M5
 mixes performance and efficiency cores).
 
 Two limits apply. That makeyd's executor is greedy is an argument about the
-Rust code, not a proof: ready targets go straight into a queue that `m`
-workers drain. And a recursive `$(MAKE)` appears as a single job whose time
-includes the whole sub-make.
+Rust code, not a proof: the coordinator hands a ready target to a worker as
+soon as one is free. And a recursive `$(MAKE)` appears as a single job whose
+time includes the whole sub-make.
+
+### Checking real schedules with the Lean model
+
+The argument above is checked by testing, not taken on trust.
+`lean_make --schedule` is an executable checker built from the same
+definitions the theorems use. `checkValid_sound` proves that a schedule it
+accepts is valid in the model. For this to be cheap, capacity is checked only
+at job start times, and the theorem shows that this suffices.
+`benchmarks/fuzzer/schedule_fuzz.py` runs on every CI build:
+
+1. It builds 25 random DAGs whose recipes sleep for 10–60 ms, with
+   `makeyd -j2…4 --trace`.
+2. It gives each recorded schedule to the Lean checker.
+3. It fails unless the schedule is valid (prerequisites first, at most `m`
+   jobs at once) and within Graham's bound.
+
+A self-test feeds the checker schedules that break each rule. A deliberately
+wrong slot count in the harness gets caught on real runs.
+
+### v0.1.2: longest remaining path first
+
+Before v0.1.2, ready targets went to workers in hash-map order. Now they wait
+in a priority queue ordered by *bottom level*: the target's own duration
+plus the longest chain of targets that depend on it. Durations come from
+`.makeyd_log`, which makeyd writes after each build, much like Ninja's
+`.ninja_log`. Without history, the hop count stands in. Any order that never
+leaves a slot idle while work is ready keeps Graham's bound, so the theorem
+still applies.
+
+| Scheduler | Gap to lower bound on the 25 fuzz DAGs: mean | worst |
+| --- | ---: | ---: |
+| v0.1.1, hash order | 1.07–1.08× | 1.27–1.30× |
+| v0.1.2, bottom level first | 1.01–1.02× | 1.06–1.11× |
+
+Ranges are over two runs each, on the same graphs. On Lua at `-j8` there is
+no measurable difference: v0.1.1 takes 510 ± 22 ms, v0.1.2 518 ± 42 ms and
+GNU make 521 ± 45 ms. That matches the profile above, since Lua's gap came
+from contended CPUs, not from job order. Null builds are unchanged: source
+files without rules stay out of the analysis, so it runs only when a recipe
+needs a worker.
 
 ## 3. Testing: differential, not just unit
 
@@ -373,12 +413,10 @@ microcontrollers would be a different product.
 - Clippy reports about 50 lints. CI shows them but does not yet fail on
   them.
 - The macOS binaries are not notarized.
-- No refinement proof connects the Lean model and the Rust code. The fuzzer
-  is the bridge. It does not yet check schedules against the Lean bounds;
-  only `--profile` reports them.
-- The ready queue is FIFO. A longest-remaining-path-first order would keep
-  the greedy bound and might close part of the `-j8` gap. The `--profile`
-  numbers above say how much it could win at most.
+- No refinement proof connects the Lean model and the Rust code. Two
+  fuzzers are the bridge: one for rebuild decisions and one for schedules.
+- `.makeyd_log` is a new file in the build directory. Add it to
+  `.gitignore`.
 
 The code, the benchmark harness and its raw JSON are all in the repository:
 <https://github.com/dmytro-yemelianov/makeyd>.

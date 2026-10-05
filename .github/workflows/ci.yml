@@ -62,3 +62,6 @@ jobs:
 
       - name: Differential fuzzer (makeyd vs GNU make vs Lean model)
         run: python3 benchmarks/fuzzer/fuzz_runner.py
+
+      - name: Schedule fuzzer (real -jN schedules checked by the Lean model)
+        run: python3 benchmarks/fuzzer/schedule_fuzz.py 25

@@ -198,6 +198,21 @@ impl TraceCollector {
         ))
     }
 
+    /// Durations of the rules that actually ran a recipe in this run.
+    pub fn rebuilt_durations(&self) -> Vec<(String, u64)> {
+        let events = self.events.lock().unwrap();
+        events
+            .iter()
+            .filter(|e| {
+                e.ph == "X"
+                    && e.cat == "rule"
+                    && e.dur > 0
+                    && e.args.get("status").map(String::as_str) == Some("rebuilt")
+            })
+            .map(|e| (e.name.clone(), e.dur))
+            .collect()
+    }
+
     /// Save Chrome Trace / Perfetto compatible JSON
     pub fn save_to_file(&self, path: &str) -> io::Result<()> {
         let events = self.events.lock().unwrap();

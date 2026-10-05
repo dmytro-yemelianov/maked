@@ -1,6 +1,6 @@
 [package]
 name = "makeyd"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "make by Yemelianov Dmytro - POSIX IEEE Std 1003.1 conforming Make with Lean 4 formal semantics"
 authors = ["Yemelianov Dmytro"]

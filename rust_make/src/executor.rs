@@ -4,7 +4,8 @@ use crate::freshness::{
 };
 use crate::graph::DependencyGraph;
 use crate::parser::expand_variables;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -287,6 +288,7 @@ impl<'a> Executor<'a> {
                 .unwrap()
                 .save(crate::hash::BuildDatabase::DB_FILENAME);
         }
+        self.save_duration_log();
         if let Some(ref path) = self.config.trace_file {
             let _ = self.tracer.save_to_file(path);
         }
@@ -1008,6 +1010,29 @@ impl<'a> Executor<'a> {
         }
         drop(done_tx);
 
+        // Ready targets wait in a priority queue and go to a worker only when
+        // one is free, longest remaining path (bottom level) first. Durations
+        // come from earlier runs; with none, the hop count stands in.
+        // Computed on first use, so null builds (nothing to dispatch) skip it.
+        let priority: std::cell::OnceCell<HashMap<String, u64>> = std::cell::OnceCell::new();
+        let rank = |t: &String| {
+            // Source files without a rule only need a stat; they never hold
+            // up a recipe, so they go last and do not trigger the analysis.
+            if !self.makefile.rules.contains_key(t) && self.makefile.get_rule(t).is_none() {
+                return 0;
+            }
+            priority
+                .get_or_init(|| {
+                    let history = crate::history::DurationLog::load(crate::history::LOG_FILENAME);
+                    crate::history::bottom_levels(&reachable, &dependents, &history)
+                })
+                .get(t)
+                .copied()
+                .unwrap_or(1)
+        };
+        let mut ready: BinaryHeap<(u64, Reverse<String>)> = BinaryHeap::new();
+        let mut idle_workers = num_workers;
+
         let mut ready_queue = VecDeque::new();
         for (node, deg) in &in_degrees {
             if *deg == 0 {
@@ -1023,18 +1048,29 @@ impl<'a> Executor<'a> {
             let pre = self.settle_inline(&task, &target_statuses.lock().unwrap());
             match pre {
                 Some(status) => settled.push_back((task, status, Vec::new())),
-                None => {
-                    let _ = task_tx.send(task);
-                }
+                None => ready.push((rank(&task), Reverse(task))),
             }
         }
 
         let mut remaining_targets = reachable.len();
 
         while remaining_targets > 0 {
+            while idle_workers > 0 {
+                match ready.pop() {
+                    Some((_, Reverse(task))) => {
+                        let _ = task_tx.send(task);
+                        idle_workers -= 1;
+                    }
+                    None => break,
+                }
+            }
             let next = match settled.pop_front() {
                 Some(item) => Ok(item),
-                None => done_rx.recv(),
+                None => {
+                    let msg = done_rx.recv();
+                    idle_workers += 1;
+                    msg
+                }
             };
             match next {
                 Ok((finished_node, status, logs)) => {
@@ -1082,9 +1118,7 @@ impl<'a> Executor<'a> {
                                             Some(st) => {
                                                 settled.push_back((dep.clone(), st, Vec::new()))
                                             }
-                                            None => {
-                                                let _ = task_tx.send(dep.clone());
-                                            }
+                                            None => ready.push((rank(dep), Reverse(dep.clone()))),
                                         }
                                     }
                                 }
@@ -1121,6 +1155,7 @@ impl<'a> Executor<'a> {
                 .unwrap()
                 .save(crate::hash::BuildDatabase::DB_FILENAME);
         }
+        self.save_duration_log();
         if let Some(ref path) = self.config.trace_file {
             let _ = self.tracer.save_to_file(path);
         }
@@ -1138,6 +1173,22 @@ impl<'a> Executor<'a> {
             critical_path: crit_path,
             schedule: self.tracer.schedule_bounds(self.config.jobs, crit_us),
         })
+    }
+
+    /// Merge the recipe durations measured in this run into `.makeyd_log`,
+    /// which orders the next parallel run. Skipped when nothing ran a recipe
+    /// (`-n`, `-t`, `-q`, null builds); a write failure only loses history.
+    fn save_duration_log(&self) {
+        if self.config.dry_run || self.config.touch_only || self.config.question {
+            return;
+        }
+        let measured = self.tracer.rebuilt_durations();
+        if measured.is_empty() {
+            return;
+        }
+        let mut log = crate::history::DurationLog::load(crate::history::LOG_FILENAME);
+        log.merge(measured);
+        let _ = log.save(crate::history::LOG_FILENAME);
     }
 
     /// Decide on the coordinator thread whether `target` is already up to

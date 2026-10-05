@@ -11,3 +11,4 @@
 /benchmarks/lua_test/lua-5.4.9/src/compile_commands.json
 /benchmarks/lua_test/lua-5.4.9/src/build.ninja
 /benchmarks/lua_test/lua-5.4.9.tar.gz
+.makeyd_log

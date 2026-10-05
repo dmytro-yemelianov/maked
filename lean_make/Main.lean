@@ -86,8 +86,39 @@ def runEval (specFile : String) : IO Unit := do
     if !failedList.isEmpty then
       IO.println s!"FAILED {String.intercalate " " failedList}"
 
+/-- `--schedule FILE`: check a recorded schedule against the Scheduling model.
+Input lines: `SLOTS m` and `JOB name start dur pred...` (times in µs). -/
+def runSchedule (file : String) : IO Unit := do
+  let content ← IO.FS.readFile file
+  let mut m := 1
+  let mut jobs : List (String × Nat × Nat × List String) := []
+  for line in content.splitOn "\n" do
+    let parts := (line.trimAscii.toString.splitOn " ").filter (fun s => !s.isEmpty)
+    match parts with
+    | "SLOTS" :: n :: _ => m := n.toNat?.getD 1
+    | "JOB" :: name :: st :: d :: preds =>
+      jobs := (name, st.toNat?.getD 0, d.toNat?.getD 0, preds) :: jobs
+    | _ => pure ()
+  let recs := jobs.reverse
+  let look (u : String) := recs.find? (·.1 == u)
+  let I : Scheduling.Instance := {
+    jobs := recs.map (·.1)
+    pred := fun u => ((look u).map (·.2.2.2)).getD []
+    dur := fun u => ((look u).map (·.2.2.1)).getD 0
+    m := m
+  }
+  let S : String → Nat := fun u => ((look u).map (·.2.1)).getD 0
+  IO.println s!"VALID_PREC {Scheduling.checkPrec I S}"
+  IO.println s!"VALID_CAP {Scheduling.checkCap I S}"
+  IO.println s!"SLOTS {m}"
+  IO.println s!"WORK {Scheduling.work I}"
+  IO.println s!"CRIT {Scheduling.criticalPath I S}"
+  IO.println s!"MAKESPAN {Scheduling.makespan I S}"
+
 def main (args : List String) : IO Unit := do
   match args with
+  | ["--schedule", file] =>
+    runSchedule file
   | ["--eval", specFile] =>
     runEval specFile
   | _ => do

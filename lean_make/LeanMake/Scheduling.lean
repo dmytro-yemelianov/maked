@@ -359,4 +359,105 @@ theorem greedy_makespan_bound (hV : Valid I S) (hG : Greedy I S)
   have := Nat.mul_le_mul_left I.m hidle
   omega
 
+/-! ### 3. An executable checker for recorded schedules
+
+`makeyd --trace` records when every job started and how long it ran. The
+fuzzer feeds those schedules to `lean_make --schedule`, which uses the
+functions below: the same `busy`, `fin` and `Valid` the theorems are about.
+Capacity is checked only at job start times. `checkValid_sound` shows that
+this suffices: `busy` only rises when some job starts. -/
+
+/-- Some element of a non-empty list maximizes `k`. -/
+theorem exists_max_by (k : TargetName → Nat) (l : List TargetName) (h : l ≠ []) :
+    ∃ p ∈ l, ∀ q ∈ l, k q ≤ k p := by
+  induction l with
+  | nil => exact absurd rfl h
+  | cons a l ih =>
+    by_cases hl : l = []
+    · subst hl; exact ⟨a, by simp, fun q hq => by simp at hq; subst hq; exact Nat.le_refl _⟩
+    · obtain ⟨p, hp, hmax⟩ := ih hl
+      by_cases hap : k p ≤ k a
+      · refine ⟨a, by simp, fun q hq => ?_⟩
+        simp at hq
+        rcases hq with rfl | hq
+        · exact Nat.le_refl _
+        · exact Nat.le_trans (hmax q hq) hap
+      · refine ⟨p, by simp [hp], fun q hq => ?_⟩
+        simp at hq
+        rcases hq with rfl | hq
+        · omega
+        · exact hmax q hq
+
+/-- If no more than `m` jobs run at any job's start, none runs over `m` ever. -/
+theorem cap_of_cap_at_starts (hs : ∀ u ∈ I.jobs, busy I S (S u) ≤ I.m) :
+    ∀ t, busy I S t ≤ I.m := by
+  intro t
+  let R := I.jobs.filter (fun w => decide (S w ≤ t ∧ t < S w + I.dur w))
+  by_cases hR : R = []
+  · have hz : ∀ w ∈ I.jobs, runningAt I S t w ≤ 0 := by
+      intro w hw
+      unfold runningAt
+      split
+      · rename_i hrun
+        have : w ∈ R := List.mem_filter.mpr ⟨hw, by simp [hrun]⟩
+        rw [hR] at this; simp at this
+      · exact Nat.le_refl _
+    have := sumList_le_mono I.jobs (runningAt I S t) (fun _ => 0) hz
+    rw [sumList_zero] at this
+    unfold busy; omega
+  · obtain ⟨u, huR, hmax⟩ := exists_max_by S R hR
+    have hu := List.mem_filter.mp huR
+    have hsu : S u ≤ t := by simpa using (of_decide_eq_true hu.2).1
+    have hmono : ∀ w ∈ I.jobs, runningAt I S t w ≤ runningAt I S (S u) w := by
+      intro w hw
+      unfold runningAt
+      split
+      · rename_i hrun
+        have hwR : w ∈ R := List.mem_filter.mpr ⟨hw, by simp [hrun]⟩
+        have := hmax w hwR
+        have hrun' : S w ≤ S u ∧ S u < S w + I.dur w := ⟨this, by omega⟩
+        simp [hrun']
+      · exact Nat.zero_le _
+    have := sumList_le_mono I.jobs _ _ hmono
+    have hcap := hs u hu.1
+    unfold busy at *
+    omega
+
+/-- Executable precedence check (prerequisites are jobs and finish first). -/
+def checkPrec : Bool :=
+  I.jobs.all (fun v => (I.pred v).all (fun p => decide (p ∈ I.jobs) && decide (fin I S p ≤ S v)))
+
+/-- Executable capacity check, at job start times only. -/
+def checkCap : Bool := I.jobs.all (fun u => decide (busy I S (S u) ≤ I.m))
+
+def checkValid : Bool := checkPrec I S && checkCap I S
+
+/-- Soundness: a schedule the checker accepts is valid in the model. -/
+theorem checkValid_sound (h : checkValid I S = true) : Valid I S := by
+  unfold checkValid at h
+  simp only [Bool.and_eq_true] at h
+  obtain ⟨hp, hc⟩ := h
+  unfold checkPrec at hp
+  unfold checkCap at hc
+  simp only [List.all_eq_true, Bool.and_eq_true, decide_eq_true_eq] at hp hc
+  exact {
+    pred_mem := fun v hv p hpv => (hp v hv p hpv).1
+    prec := fun v hv p hpv => (hp v hv p hpv).2
+    cap := cap_of_cap_at_starts I S hc
+  }
+
+/-- Longest chain ending in each job, processing jobs in start order (a
+topological order for any valid schedule with positive durations). Returns
+the critical path `max (head v + dur v)`. -/
+def criticalPath : Nat :=
+  let order := I.jobs.mergeSort (fun a b => decide (S a ≤ S b))
+  let heads := order.foldl (fun (acc : List (TargetName × Nat)) v =>
+    let h := (I.pred v).foldl (fun m p =>
+      max m (((acc.find? (·.1 == p)).map (·.2)).getD 0 + I.dur p)) 0
+    (v, h) :: acc) []
+  heads.foldl (fun m (v, h) => max m (h + I.dur v)) 0
+
+/-- Latest finish time. -/
+def makespan : Nat := I.jobs.foldl (fun m u => max m (fin I S u)) 0
+
 end LeanMake.Scheduling

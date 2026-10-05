@@ -59,6 +59,14 @@ sudo make install PREFIX=/usr/local
 This needs Rust 1.88 or newer (edition 2024; CI uses 1.88.0). The Lean model and the fuzzer need
 elan (Lean `v4.30.0` per `lean_make/lean-toolchain`), Python 3 and GNU make.
 
+## Files makeyd writes
+
+- `.makeyd_log` holds recipe durations from earlier builds. The parallel
+  scheduler uses them to start the longest remaining path first. Deleting
+  it only loses that ordering hint. Add it to `.gitignore`.
+- `.makeyd.db` is written only with `--hash`, and `.makeyd_cache/` only with
+  `--cache`.
+
 ## Remote workers: security
 
 `makeyd --worker-listen=ADDR` runs any command that a TCP client sends it,
