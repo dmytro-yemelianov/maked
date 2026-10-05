@@ -46,6 +46,8 @@ structure BuildState where
   outcomes : List (TargetName × TargetOutcome)
   visiting : List TargetName
   clock    : Timestamp
+  /-- Targets whose recipe ran, newest first (see `LeanMake.RunOnce`). -/
+  ran      : List TargetName := []
 
 def BuildState.getOutcome (st : BuildState) (t : TargetName) : Option TargetOutcome :=
   match st.outcomes.find? (fun (name, _) => name == t) with
@@ -63,26 +65,22 @@ def maxDepTimestamp (deps : List (TargetName × TargetOutcome)) : Timestamp :=
     | none => acc) 0
 
 /--
-  POSIX Freshness Decision Rule (IEEE Std 1003.1):
-  Target T requires rebuild if:
+  Freshness decision (POSIX, as GNU make implements it). Target T is remade if:
   1. T is phony; OR
-  2. T does not exist on filesystem; OR
+  2. T does not exist on the filesystem (with or without a recipe); OR
   3. Any prerequisite was rebuilt in the current run; OR
   4. Any prerequisite has a modification time strictly greater than T (dMtime > tMtime).
+  `hasCommands` does not change the decision, only what remaking does (`executeRule`).
 -/
 def needsRebuild
     (targetState : FileState)
     (isPhony : Bool)
-    (hasCommands : Bool)
+    (_hasCommands : Bool)
     (depOutcomes : List (TargetName × TargetOutcome)) : Bool :=
-  if isPhony then
-    if hasCommands then true
-    else depOutcomes.any (fun (_, out) => match out with | TargetOutcome.rebuilt _ => true | _ => false)
+  if isPhony then true
   else
     match targetState with
-    | FileState.missing =>
-      if hasCommands then true
-      else depOutcomes.any (fun (_, out) => match out with | TargetOutcome.rebuilt _ => true | _ => false)
+    | FileState.missing => true
     | FileState.present tMtime =>
       depOutcomes.any (fun (_, out) =>
         match out with
@@ -104,12 +102,26 @@ def executeRule
     let targetFs := st.fs.get r.target
     let depMax := maxDepTimestamp depResults
     if needsRebuild targetFs r.isPhony (!r.commands.isEmpty) depResults then
-      -- Target needs rebuild: advance clock strictly beyond both current clock AND all prerequisites!
-      let newClock := (Nat.max st.clock depMax) + 1
-      let newFs := if r.isPhony then st.fs else st.fs.set r.target newClock
-      let out := TargetOutcome.rebuilt newClock
-      let st1 := { st with fs := newFs, clock := newClock }
-      (st1.recordOutcome r.target out, out)
+      if r.commands.isEmpty then
+        -- Remade with no recipe. GNU make: a phony or nonexistent target is
+        -- then taken as just updated (the `FORCE:` idiom); an existing file
+        -- keeps its mtime, so its dependents compare timestamps as usual.
+        match r.isPhony, targetFs with
+        | false, FileState.present t =>
+          let out := TargetOutcome.upToDate t
+          (st.recordOutcome r.target out, out)
+        | _, _ =>
+          let newClock := (Nat.max st.clock depMax) + 1
+          let out := TargetOutcome.rebuilt newClock
+          ({ st with clock := newClock }.recordOutcome r.target out, out)
+      else
+        -- The recipe runs: advance the clock strictly beyond both the current
+        -- clock and every prerequisite.
+        let newClock := (Nat.max st.clock depMax) + 1
+        let newFs := if r.isPhony then st.fs else st.fs.set r.target newClock
+        let out := TargetOutcome.rebuilt newClock
+        let st1 := { st with fs := newFs, clock := newClock, ran := r.target :: st.ran }
+        (st1.recordOutcome r.target out, out)
     else
       -- Target is already up to date
       match targetFs with
@@ -117,7 +129,7 @@ def executeRule
         let out := TargetOutcome.upToDate t
         (st.recordOutcome r.target out, out)
       | FileState.missing =>
-        -- Alias target with no commands: inherits newest prerequisite timestamp
+        -- Unreachable: `needsRebuild` is true for a missing target.
         let out := TargetOutcome.upToDate depMax
         (st.recordOutcome r.target out, out)
 
@@ -163,7 +175,11 @@ def evalTarget (mf : Makefile) (fuel : Nat) (t : TargetName) (st : BuildState) :
 
           let (stAfterDeps, depResults) := evalDeps rule.prereqs stVisiting []
           let stFinalVisiting := { stAfterDeps with visiting := st.visiting }
-          executeRule rule depResults stFinalVisiting
+          -- A target settles once per run: if a prerequisite's evaluation
+          -- already settled it (only possible through a cycle), keep that.
+          match stAfterDeps.getOutcome t with
+          | some settled => (stFinalVisiting, settled)
+          | none => executeRule rule depResults stFinalVisiting
 
 /-- Full build of the primary target in a Makefile -/
 def runMake (mf : Makefile) (initialFs : Filesystem) (initialMaxMtime : Timestamp := 0) (targetName : Option TargetName := none) :

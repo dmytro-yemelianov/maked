@@ -83,6 +83,9 @@ def runEval (specFile : String) : IO Unit := do
     IO.println s!"OUTCOME {outcomeStr}"
     IO.println s!"REBUILT {String.intercalate " " rebuiltList}"
     IO.println s!"UPTODATE {String.intercalate " " upToDateList}"
+    -- Targets whose recipe ran (recipe-less targets can be rebuilt without
+    -- running anything); this is what `make` prints for.
+    IO.println s!"RAN {String.intercalate " " finalSt.ran.reverse}"
     if !failedList.isEmpty then
       IO.println s!"FAILED {String.intercalate " " failedList}"
 

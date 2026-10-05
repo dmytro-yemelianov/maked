@@ -6,3 +6,4 @@ import LeanMake.Theorems
 import LeanMake.CriticalPath
 import LeanMake.Cache
 import LeanMake.Scheduling
+import LeanMake.RunOnce

@@ -611,10 +611,13 @@ fn real_main() -> ExitCode {
                 };
                 if !silent && !question {
                     for goal in quiet_goals {
-                        let has_recipe = makefile
+                        // "is up to date" means the goal needed nothing; a
+                        // phony goal is always remade (under -t, by doing
+                        // nothing), which GNU make reports as nothing to do.
+                        let up_to_date = makefile
                             .get_rule(goal)
-                            .is_some_and(|r| !r.commands.is_empty());
-                        if has_recipe {
+                            .is_some_and(|r| !r.commands.is_empty() && !r.is_phony);
+                        if up_to_date {
                             println!("{prog}: '{goal}' is up to date.");
                         } else {
                             println!("{prog}: Nothing to be done for '{goal}'.");

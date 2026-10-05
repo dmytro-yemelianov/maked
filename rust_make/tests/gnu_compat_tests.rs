@@ -516,6 +516,34 @@ fn included_makefiles_are_remade_and_reread() {
 }
 
 #[test]
+fn question_and_touch_skip_targets_without_a_recipe() {
+    // `x` has no recipe: -q does not count it as work, -t does not create
+    // it (a file named FORCE would break the idiom for good).
+    let mf = "x: a FORCE\ny: x\n\t@touch y\nFORCE:\n";
+    for args in [
+        &["-q", "x"][..],
+        &["-q", "-j4", "x"],
+        &["-q", "y"],
+        &["-t", "y"],
+        &["-t", "-j4", "y"],
+    ] {
+        assert_same_after(&[("a", ""), ("Makefile", mf)], "", args);
+    }
+    // What -t left behind must match too.
+    assert_same_after(&[("a", ""), ("Makefile", mf)], "", &["-t", "y"]);
+    assert_same(
+        &[
+            ("a", ""),
+            (
+                "Makefile",
+                &format!("{mf}check:\n\t@ls FORCE x 2>&1 | sort\n"),
+            ),
+        ],
+        &["-t", "y", "check"],
+    );
+}
+
+#[test]
 fn pattern_without_slash_matches_the_file_name() {
     // The directory comes off before matching and goes back in front of
     // each prerequisite made from a pattern; `$*` keeps it.

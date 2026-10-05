@@ -539,6 +539,9 @@ impl<'a> Executor<'a> {
         Ok(stats)
     }
 
+    /// Make `target` once: every outcome is recorded, so a target several
+    /// rules depend on is settled the first time and never redone (-t, -q
+    /// and the recipe-less paths return early inside `doname_once`).
     fn doname(
         &self,
         target: &str,
@@ -548,7 +551,17 @@ impl<'a> Executor<'a> {
         if let Some(status) = statuses.get(target) {
             return Ok(status.clone());
         }
+        let status = self.doname_once(target, statuses, stats)?;
+        statuses.insert(target.to_string(), status.clone());
+        Ok(status)
+    }
 
+    fn doname_once(
+        &self,
+        target: &str,
+        statuses: &mut HashMap<String, TargetStatus>,
+        stats: &mut ExecutionStats,
+    ) -> Result<TargetStatus, ExecutionError> {
         stats.total_evaluated += 1;
         let start_ts = self.tracer.start_micros();
         let rule_start = Instant::now();
@@ -643,11 +656,19 @@ impl<'a> Executor<'a> {
             }
             FreshnessDecision::NeedsRebuild(_reason) => {
                 let mtime_before = get_file_mtime(target);
+                // GNU make: -q asks whether a recipe would run, and -t
+                // touches only targets that have one. A target without a
+                // recipe (an alias, `FORCE:`) is remade by doing nothing.
                 if self.config.question {
-                    stats.targets_rebuilt += 1;
+                    if !rule.commands.is_empty() {
+                        stats.targets_rebuilt += 1;
+                    }
                     return Ok(TargetStatus::Rebuilt(SystemTime::now()));
                 }
 
+                if self.config.touch_only && (rule.commands.is_empty() || rule.is_phony) {
+                    return Ok(TargetStatus::Rebuilt(SystemTime::now()));
+                }
                 if self.config.touch_only {
                     if !self.config.silent {
                         println!("touch {target}");
@@ -1064,11 +1085,14 @@ impl<'a> Executor<'a> {
                                 rule_start = Instant::now();
 
                                 if config.touch_only {
-                                    if !config.silent {
-                                        output_lines.push(format!("touch {task}"));
+                                    // Only files with a recipe are touched.
+                                    if !rule.commands.is_empty() && !rule.is_phony {
+                                        if !config.silent {
+                                            output_lines.push(format!("touch {task}"));
+                                        }
+                                        touch_file(&task);
+                                        num_commands_clone.fetch_add(1, Ordering::Relaxed);
                                     }
-                                    touch_file(&task);
-                                    num_commands_clone.fetch_add(1, Ordering::Relaxed);
                                 } else {
                                     let mut restored_from_cache = false;
                                     let cache_key = if config.cache && !config.dry_run {
@@ -1601,7 +1625,9 @@ impl<'a> Executor<'a> {
         if let Some(cache) = MTIMES.get() {
             cache.lock().unwrap().clear();
         }
-        if self.config.jobs > 1 {
+        // -q runs nothing, so it gains nothing from workers; the sequential
+        // path is the one that answers it.
+        if self.config.jobs > 1 && !self.config.question {
             self.execute_parallel(root)
         } else {
             self.execute_sequential(root)

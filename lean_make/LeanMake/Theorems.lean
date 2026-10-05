@@ -23,27 +23,17 @@ namespace LeanMake
 -/
 theorem executeRule_clock_monotonic (r : Rule) (deps : List (TargetName × TargetOutcome)) (st : BuildState) :
     (executeRule r deps st).1.clock >= st.clock := by
-  dsimp [executeRule]
+  unfold executeRule
   split
-  · -- case failure
-    exact Nat.le_refl st.clock
-  · -- case success
+  · exact Nat.le_refl st.clock
+  · dsimp only
     split
-    · -- case needsRebuild = true
-      dsimp
-      split
-      · -- isPhony = true
-        have hMax : Nat.max st.clock (maxDepTimestamp deps) >= st.clock := Nat.le_max_left st.clock (maxDepTimestamp deps)
-        exact Nat.le_trans hMax (Nat.le_succ _)
-      · -- isPhony = false
-        have hMax : Nat.max st.clock (maxDepTimestamp deps) >= st.clock := Nat.le_max_left st.clock (maxDepTimestamp deps)
-        exact Nat.le_trans hMax (Nat.le_succ _)
-    · -- case needsRebuild = false
-      split
-      · -- FileState.present
-        exact Nat.le_refl st.clock
-      · -- FileState.missing (alias)
-        exact Nat.le_refl st.clock
+    · split
+      · split
+        · exact Nat.le_refl st.clock
+        · exact Nat.le_trans (Nat.le_max_left _ _) (Nat.le_succ _)
+      · exact Nat.le_trans (Nat.le_max_left _ _) (Nat.le_succ _)
+    · split <;> exact Nat.le_refl st.clock
 
 /--
   Theorem 2: Phony Target Always Rebuilds when Commands are Present.
@@ -136,34 +126,49 @@ theorem rebuild_strictly_fresher_than_dep
   exact Nat.lt_succ_of_le hTrans
 
 /--
-  Theorem 9: Alias Target Up-To-Date Invariant.
-  If an alias target without commands has all prerequisites upToDate, it needs no rebuild.
+  Theorem 9: A Missing Target Is Always Remade.
+  With or without a recipe, and whatever its prerequisites did. (Until
+  v0.2.2 the model let a missing target without a recipe stay up to date
+  when its prerequisites were; GNU make and maked both remake it.)
 -/
-theorem alias_no_rebuild_when_deps_up_to_date
-    (isPhony : Bool)
-    (deps : List (TargetName × TargetOutcome))
-    (hDepsUpToDate : ∀ d ∈ deps, ∃ dMtime, d.2 = TargetOutcome.upToDate dMtime) :
-    needsRebuild FileState.missing isPhony false deps = false := by
+theorem missing_target_always_remade
+    (hasCommands : Bool)
+    (deps : List (TargetName × TargetOutcome)) :
+    needsRebuild FileState.missing false hasCommands deps = true := by
   dsimp [needsRebuild]
+
+/--
+  Theorem 9b: The `FORCE:` Idiom.
+  A rule with no prerequisites and no recipe whose file does not exist is
+  remade as "just updated", so everything that depends on it is remade too.
+-/
+theorem force_rule_rebuilt
+    (r : Rule) (st : BuildState)
+    (hNoCmds : r.commands = [])
+    (hMissing : st.fs.get r.target = FileState.missing) :
+    ∃ t, (executeRule r [] st).2 = TargetOutcome.rebuilt t := by
+  unfold executeRule
+  simp [hNoCmds, hMissing, needsRebuild]
+
+/--
+  Theorem 9c: An Existing File Without a Recipe Keeps Its Timestamp.
+  Remaking it runs nothing, so its outcome is its own mtime, never `rebuilt`.
+-/
+theorem recipeless_present_keeps_mtime
+    (r : Rule) (deps : List (TargetName × TargetOutcome)) (st : BuildState) (t : Timestamp)
+    (hNoCmds : r.commands = [])
+    (hNotPhony : r.isPhony = false)
+    (hPresent : st.fs.get r.target = FileState.present t)
+    (hNoFail : deps.find? (fun x => match x.snd with | TargetOutcome.failed _ => true | _ => false) = none) :
+    (executeRule r deps st).2 = TargetOutcome.upToDate t := by
+  unfold executeRule
   split
-  · -- case isPhony = true
-    rw [List.any_eq_false]
-    intro (dName, dOut) hIn
-    rcases hDepsUpToDate (dName, dOut) hIn with ⟨dMtime, hdOut⟩
-    dsimp
-    change dOut = TargetOutcome.upToDate dMtime at hdOut
-    rw [hdOut]
-    intro h
+  · rename_i heq
+    have hContra := heq.symm.trans hNoFail
     contradiction
-  · -- case isPhony = false
-    rw [List.any_eq_false]
-    intro (dName, dOut) hIn
-    rcases hDepsUpToDate (dName, dOut) hIn with ⟨dMtime, hdOut⟩
-    dsimp
-    change dOut = TargetOutcome.upToDate dMtime at hdOut
-    rw [hdOut]
-    intro h
-    contradiction
+  · dsimp only
+    simp only [hNoCmds, hNotPhony, hPresent]
+    split <;> simp
 
 /--
   Lemma: Up-To-Date Prerequisite List Contains No Failure.

@@ -48,6 +48,10 @@ class DAGGenerator:
 
         current_layer = leaves
         depth = self.rng.randint(2, self.max_depth)
+        # Rule kinds. Until v0.2.2 every generated rule had a recipe that
+        # created its file, so recipe-less rules (aliases, the `FORCE:`
+        # idiom) were never compared, and the Lean model got them wrong.
+        kinds = ["normal"] * 6 + ["alias", "phony_alias", "phony_cmd", "existing_alias", "no_touch"]
         for d in range(depth):
             next_layer = []
             layer_size = self.rng.randint(2, 4)
@@ -55,16 +59,34 @@ class DAGGenerator:
                 tgt = f"node_{d}_{j}.o"
                 fanout = min(len(current_layer), self.rng.randint(1, self.max_fanout))
                 prereqs = self.rng.sample(current_layer, fanout)
+                kind = self.rng.choice(kinds)
+                commands = {
+                    "normal": [f'@echo "BUILD {tgt}" && touch {tgt}'],
+                    "phony_cmd": [f'@echo "BUILD {tgt}"'],
+                    "no_touch": [f'@echo "BUILD {tgt}"'],
+                }.get(kind, [])
+                if kind == "existing_alias":
+                    p = workdir / tgt
+                    p.write_text("")
+                    mtime = base_time + self.rng.choice([-500, 5, 5000])
+                    os.utime(p, (mtime, mtime))
+                    leaf_mtimes[tgt] = mtime
 
                 rules.append({
                     "target": tgt,
                     "prereqs": prereqs,
-                    "commands": [f'@echo "BUILD {tgt}" && touch {tgt}'],
-                    "is_phony": False
+                    "commands": commands,
+                    "is_phony": kind in ("phony_alias", "phony_cmd"),
                 })
                 next_layer.append(tgt)
             layers.append(next_layer)
             current_layer = next_layer
+
+        # The `FORCE:` idiom: no prerequisites, no recipe, no file.
+        if self.rng.random() < 0.5:
+            victim = self.rng.choice(rules)
+            victim["prereqs"] = victim["prereqs"] + ["FORCE"]
+            rules.append({"target": "FORCE", "prereqs": [], "commands": [], "is_phony": False})
 
         # Top-level 'all' target
         top_prereqs = current_layer
@@ -76,9 +98,10 @@ class DAGGenerator:
         })
 
         # Generate Makefile string
+        phony = ["all"] + [r["target"] for r in rules if r["is_phony"]]
         lines = [
             "# Auto-generated fuzz Makefile",
-            ".PHONY: all",
+            ".PHONY: " + " ".join(phony),
             "",
         ]
         for r in rules:
@@ -122,6 +145,7 @@ def run_lean_make(spec_path: Path):
     rebuilt = []
     uptodate = []
     failed = []
+    ran = []
 
     for line in res.stdout.splitlines():
         line = line.strip()
@@ -133,6 +157,8 @@ def run_lean_make(spec_path: Path):
         elif line.startswith("UPTODATE "):
             tokens = line.split("UPTODATE ")[1].strip().split()
             uptodate = [t for t in tokens if t]
+        elif line.startswith("RAN"):
+            ran = [t for t in line[3:].split() if t]
         elif line.startswith("FAILED "):
             tokens = line.split("FAILED ")[1].strip().split()
             failed = [t for t in tokens if t]
@@ -143,6 +169,7 @@ def run_lean_make(spec_path: Path):
         "rebuilt": sorted(rebuilt),
         "uptodate": sorted(uptodate),
         "failed": sorted(failed),
+        "ran": sorted(ran),
         "raw_stdout": res.stdout
     }
 
@@ -198,12 +225,12 @@ def run_differential_test(seed: int) -> dict:
                 "gmake_rebuilt": out_gmake_1["rebuilt"],
             })
 
-        if out_maked_1["rebuilt"] != out_lean_1["rebuilt"]:
+        if out_maked_1["rebuilt"] != out_lean_1["ran"]:
             test_result["passed"] = False
             test_result["discrepancies"].append({
                 "phase": "Phase 1: maked vs Lean 4 Formal Model Initial Build",
                 "maked_rebuilt": out_maked_1["rebuilt"],
-                "lean_rebuilt": out_lean_1["rebuilt"],
+                "lean_ran": out_lean_1["ran"],
             })
 
         # ---------------- Phase 2: Re-run Parity & Idempotency (3-way) ----------------
@@ -227,7 +254,7 @@ def run_differential_test(seed: int) -> dict:
         generate_lean_spec(rules, phase2_mtimes, "all", spec2)
         out_lean_2 = run_lean_make(spec2)
 
-        lean_concrete_rebuilt = [t for t in out_lean_2["rebuilt"] if t != "all"]
+        lean_concrete_rebuilt = [t for t in out_lean_2["ran"] if t != "all"]
         if maked_concrete_rebuilt != lean_concrete_rebuilt:
             test_result["passed"] = False
             test_result["discrepancies"].append({
@@ -262,12 +289,12 @@ def run_differential_test(seed: int) -> dict:
                 "gmake_rebuilt": out_gmake_3["rebuilt"],
             })
 
-        if out_maked_3["rebuilt"] != out_lean_3["rebuilt"]:
+        if out_maked_3["rebuilt"] != out_lean_3["ran"]:
             test_result["passed"] = False
             test_result["discrepancies"].append({
                 "phase": f"Phase 3: maked vs Lean 4 Incremental Rebuild on {mod_leaf}",
                 "maked_rebuilt": out_maked_3["rebuilt"],
-                "lean_rebuilt": out_lean_3["rebuilt"],
+                "lean_ran": out_lean_3["ran"],
             })
 
         # ---------------- Phase 4: Question Mode (-q) ----------------
@@ -283,10 +310,32 @@ def run_differential_test(seed: int) -> dict:
                 "gmake_code": q_gmake["exit_code"],
             })
 
+        # ---------------- Phase 5: Touch Mode (-t) ----------------
+        # Fresh copies of the generated tree: what -t prints and which files
+        # it leaves (only targets with a recipe are touched).
+        touched = {}
+        for name, binary in (("maked", MAKED_BIN), ("gmake", GMAKE_BIN)):
+            tdir = workdir / f"touch_{name}"
+            shutil.copytree(workdir, tdir, ignore=shutil.ignore_patterns(
+                "maked_run", "gmake_run", "touch_*", "spec*"))
+            out = run_make_command([str(binary), "-t", "all"], tdir)
+            # make's own messages start with its name; compare them as MAKE.
+            lines = [l.replace(f"{Path(str(binary)).name}:", "MAKE:", 1)
+                     for l in out["stdout"].split("\n")]
+            touched[name] = (out["exit_code"], sorted(lines),
+                             sorted(p.name for p in tdir.iterdir()))
+        if touched["maked"] != touched["gmake"]:
+            test_result["passed"] = False
+            test_result["discrepancies"].append({
+                "phase": "Phase 5: Touch Mode (-t)",
+                "maked": touched["maked"],
+                "gmake": touched["gmake"],
+            })
+
         return test_result
 
 def main():
-    num_iterations = 50
+    num_iterations = int(sys.argv[1]) if len(sys.argv) > 1 else 50
     print("=" * 70)
     print("3-Way Differential Oracle Suite: maked (Rust) vs gmake vs Lean 4 Formal Model")
     print("=" * 70)
