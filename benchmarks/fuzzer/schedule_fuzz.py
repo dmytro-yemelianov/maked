@@ -9,8 +9,9 @@ definitions in lean_make/LeanMake/Scheduling.lean. Every schedule must be:
 
 1. valid in the model: prerequisites finish first and at most M jobs run at
    once (`checkValid`, proved sound by `checkValid_sound`);
-2. within Graham's greedy bound, M * C <= W + M * L
-   (`greedy_makespan_bound`), plus a small allowance for dispatch latency.
+2. within Graham's greedy bound in its tight form, M * C <= W + (M-1) * L
+   (`greedy_makespan_bound_tight`), plus a small allowance for dispatch
+   latency.
    The model has zero latency between a job becoming ready and starting;
    a real executor does not.
 
@@ -102,10 +103,11 @@ def run_one(seed):
             return f"-j{slots}: more than {slots} jobs ran at once\n" + "\n".join(lines)
         m, w, l, c = slots, int(res["WORK"]), int(res["CRIT"]), int(res["MAKESPAN"])
         allowance = LATENCY_PER_JOB_US * len(preds)
-        if m * c > w + m * l + m * allowance:
+        # Tight form, greedy_makespan_bound_tight: m*C <= W + (m-1)*L.
+        if m * c > w + (m - 1) * l + m * allowance:
             return (f"-j{slots}: greedy bound exceeded: makespan {c} us > "
-                    f"W/m + L = {w / m + l:.0f} us (+{allowance} us allowance)")
-        return (c, w / m + l, max(l, -(-w // m)))
+                    f"(W + (m-1)L)/m = {(w + (m - 1) * l) / m:.0f} us (+{allowance} us allowance)")
+        return (c, (w + (m - 1) * l) / m, max(l, -(-w // m)))
 
 
 def main():
@@ -124,7 +126,7 @@ def main():
             gaps.append(c / lower)
     print(f"Schedule check: {n - len(failures)}/{n} schedules valid and within the greedy bound")
     if ratios:
-        print(f"    makespan / (W/m + L): max {max(ratios):.2f}, mean {sum(ratios) / len(ratios):.2f}")
+        print(f"    makespan / ((W + (m-1)L)/m): max {max(ratios):.2f}, mean {sum(ratios) / len(ratios):.2f}")
         print(f"    makespan / lower bound: max {max(gaps):.2f}, mean {sum(gaps) / len(gaps):.2f}")
     sys.exit(1 if failures else 0)
 

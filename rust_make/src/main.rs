@@ -644,8 +644,9 @@ fn real_main() -> ExitCode {
                             b.jobs
                         );
                         println!(
-                            "    Greedy bound:       {:.1} ms  (work / {} + critical path)",
+                            "    Greedy bound:       {:.1} ms  ((work + {} x critical path) / {})",
                             ms(b.graham_bound_us),
+                            b.jobs.saturating_sub(1),
                             b.jobs
                         );
                         println!(

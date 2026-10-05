@@ -5,6 +5,7 @@ open LeanMake LeanMake.Scheduling
 #print axioms work_le_slots_mul_makespan
 #print axioms chain_dur_le_finish
 #print axioms greedy_makespan_bound
+#print axioms greedy_makespan_bound_tight
 #print axioms checkValid_sound
 #print axioms schedule_bounded_by_path
 #print axioms executeWithCAS_idempotent

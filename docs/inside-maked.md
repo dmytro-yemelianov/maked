@@ -113,7 +113,7 @@ lines across seven modules:
 - `Scheduling`: `-jN` schedules and how good a greedy scheduler is;
 - `Theorems`: the proofs.
 
-There are **52 theorems** (22 of them in `Scheduling`, mostly lemmas about
+There are **58 theorems** (28 of them in `Scheduling`, mostly lemmas about
 finite sums), all kernel-checked, with no `sorry` and no `admit`. CI fails
 if either word appears, and also if `#print axioms` shows a headline theorem
 depending on `sorryAx`. They fall into five groups:
@@ -143,11 +143,13 @@ depending on `sorryAx`. They fall into five groups:
   - no dependency chain finishes faster than the sum of its durations
     (`chain_dur_le_finish`);
   - a greedy schedule, which never leaves a ready job waiting while a slot
-    is free, satisfies `C ≤ W/m + L`, where `L` is the critical path
-    (`greedy_makespan_bound`, Graham's list-scheduling bound).
+    is free, satisfies `m·C ≤ W + (m−1)·L`, that is
+    `C ≤ W/m + (1 − 1/m)·L`, where `L` is the critical path
+    (`greedy_makespan_bound_tight`: Graham's list-scheduling bound in its
+    tight form; the weaker `C ≤ W/m + L` is `greedy_makespan_bound`).
 
   Together these say that no schedule beats `max(L, W/m)` and that a greedy
-  one is within 2× of that. Finding the optimal schedule is NP-hard, so the
+  one is within `2 − 1/m` of that. Finding the optimal schedule is NP-hard, so the
   model gives bounds, not an optimal strategy.
 
 Precision matters here, because "formally verified" gets used loosely:
@@ -172,11 +174,11 @@ durations from the trace, timed only once a job holds a jobserver slot, so
 waiting for a slot is not counted as work. Here is Lua 5.4.9 built directly
 in `src/` (all compiles visible to one scheduler) on the M5:
 
-| `-j` | Total work | Measured span | Lower bound | Greedy bound | Gap to optimum |
+| `-j` | Total work | Measured span | Lower bound | Greedy bound (tight) | Gap to optimum |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2 | 3,694 ms | 1,867 ms | 1,847 ms | 2,234 ms | ≤ 1.01× |
-| 4 | 4,123 ms | 1,135 ms | 1,031 ms | 1,460 ms | ≤ 1.10× |
-| 8 | 5,901 ms | 893 ms | 738 ms | 1,380 ms | ≤ 1.21× |
+| 2 | 3,694 ms | 1,867 ms | 1,847 ms | 2,040 ms | ≤ 1.01× |
+| 4 | 4,123 ms | 1,135 ms | 1,031 ms | 1,353 ms | ≤ 1.10× |
+| 8 | 5,901 ms | 893 ms | 738 ms | 1,300 ms | ≤ 1.21× |
 
 Every run lands inside the greedy bound, as the theorem predicts if the
 executor is greedy. The gap column is an upper bound on how much any
@@ -204,7 +206,17 @@ at job start times, and the theorem shows that this suffices.
    `maked -j2…4 --trace`.
 2. It gives each recorded schedule to the Lean checker.
 3. It fails unless the schedule is valid (prerequisites first, at most `m`
-   jobs at once) and within Graham's bound.
+   jobs at once) and within the tight form of Graham's bound.
+
+`benchmarks/fuzzer/cache_fuzz.py`, also in CI, does the same for the cache
+model in `Cache.lean`. On random DAGs whose recipes concatenate their
+inputs, it checks:
+
+- after every target is deleted, `--cache` restores all of them without
+  running a recipe, byte-identical to the first build;
+- after a leaf changes, `--cache` and `--hash` rebuild exactly what GNU make
+  rebuilds, with the same contents;
+- touching a leaf without changing it makes `--hash` rebuild nothing.
 
 A self-test feeds the checker schedules that break each rule. A deliberately
 wrong slot count in the harness gets caught on real runs.
@@ -431,8 +443,13 @@ Zig and cargo-zigbuild are installed into the runner's own tool cache, not
 system-wide, because other projects share the box. Pushing a `v*` tag builds
 all six targets, writes `SHA256SUMS` and publishes the GitHub Release. The
 v0.1.0 binaries were run by hand on macOS arm64 and x86_64, on Linux x86_64,
-and on Linux aarch64 (in a container). The Windows binary has only been
-identified as PE32+, not yet run.
+and on Linux aarch64 (in a container). The Windows binary is
+checked under Wine 10 by `scripts/ci/windows-wine-smoke.sh`: recipes through
+`cmd.exe` (including builtins like `copy`), a null build, `-k` and `-j4`.
+That first run found that simple recipe lines were exec'd directly, which
+fails for cmd.exe builtins. On Windows every recipe now goes through the
+shell. Wine 8 cannot run any binary built by Rust 1.78 or later, because it
+lacks `bcryptprimitives.dll`.
 
 ### Why there is no ESP32 build
 

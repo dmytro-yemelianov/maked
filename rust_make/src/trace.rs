@@ -9,7 +9,7 @@ use std::time::Instant;
 /// Every valid schedule takes at least `lower_bound_us` =
 /// max(critical path, ⌈work / jobs⌉) (`work_le_slots_mul_makespan`,
 /// `chain_dur_le_finish`), and a greedy one at most `graham_bound_us` =
-/// work / jobs + critical path (`greedy_makespan_bound`).
+/// (work + (jobs - 1) * critical path) / jobs (`greedy_makespan_bound_tight`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScheduleBounds {
     pub work_us: u64,
@@ -29,7 +29,7 @@ impl ScheduleBounds {
             critical_path_us,
             jobs,
             lower_bound_us: critical_path_us.max(work_us.div_ceil(m)),
-            graham_bound_us: work_us / m + critical_path_us,
+            graham_bound_us: (work_us + (m - 1) * critical_path_us) / m,
         }
     }
 
@@ -388,7 +388,7 @@ mod tests {
         assert_eq!(b.work_us, 30);
         assert_eq!(b.span_us, 20);
         assert_eq!(b.lower_bound_us, 15); // max(CP 10, ceil(30 / 2))
-        assert_eq!(b.graham_bound_us, 25); // 30 / 2 + 10
+        assert_eq!(b.graham_bound_us, 20); // (30 + 1 * 10) / 2
         assert!((b.gap() - 20.0 / 15.0).abs() < 1e-9);
     }
 

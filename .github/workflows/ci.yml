@@ -64,3 +64,6 @@ jobs:
 
       - name: Schedule fuzzer (real -jN schedules checked by the Lean model)
         run: python3 benchmarks/fuzzer/schedule_fuzz.py 25
+
+      - name: Cache/hash fuzzer (--cache restores byte-identical outputs; --hash ignores touches)
+        run: python3 benchmarks/fuzzer/cache_fuzz.py 10

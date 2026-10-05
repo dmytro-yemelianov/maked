@@ -38,8 +38,8 @@ contains the man page (`man/maked.1`) and bash/zsh/fish completions.
 macOS binaries are cross-built and not notarized. After extracting, run
 `xattr -d com.apple.quarantine maked`.
 
-On Windows, recipes run through `$SHELL` if it is set and `%COMSPEC%`
-(cmd.exe) otherwise. The jobserver and the remote-worker shell are Unix-only.
+On Windows, every recipe line runs through `$SHELL` if it is set and
+`%COMSPEC%` (cmd.exe) otherwise, so cmd builtins like `copy` work. The jobserver and the remote-worker shell are Unix-only.
 
 ### ESP32 / microcontrollers
 

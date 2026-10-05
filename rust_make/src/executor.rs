@@ -302,6 +302,10 @@ fn recipe_command(cmd: &str, makeflags: Option<&str>, env: &crate::ast::RecipeEn
             .split_whitespace()
             .next()
             .is_some_and(|w| SH_BUILTINS.contains(&w));
+    // On Windows, `echo`, `copy`, `del`, `mkdir` ... are cmd.exe builtins,
+    // not programs: always go through the shell (GNU make does the same
+    // without sh.exe).
+    let needs_shell = needs_shell || cfg!(windows);
     let mut command = if needs_shell {
         create_shell_command_with(&resolve_program(&env.shell, env), cmd)
     } else {

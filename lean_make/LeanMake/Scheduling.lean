@@ -359,6 +359,128 @@ theorem greedy_makespan_bound (hV : Valid I S) (hG : Greedy I S)
   have := Nat.mul_le_mul_left I.m hidle
   omega
 
+/-! ### 2b. The tight form of Graham's bound: `m * C ≤ W + (m - 1) * L` -/
+
+/-- Unused capacity at `t`: free slots. -/
+def gapAt (t : Nat) : Nat := I.m - busy I S t
+
+theorem sumList_ge_member (l : List TargetName) (f : TargetName → Nat) (u : TargetName)
+    (hu : u ∈ l) : f u ≤ sumList l f := by
+  induction l with
+  | nil => simp at hu
+  | cons a l ih =>
+    simp only [sumList, List.map_cons, List.sum_cons] at *
+    rcases List.mem_cons.mp hu with rfl | h
+    · omega
+    · have := ih h; omega
+
+/-- A job that is running occupies a slot. -/
+theorem busy_pos_of_running (u : TargetName) (hu : u ∈ I.jobs) (t : Nat)
+    (h1 : S u ≤ t) (h2 : t < S u + I.dur u) : 1 ≤ busy I S t := by
+  have hr : runningAt I S t u = 1 := by
+    unfold runningAt; simp [h1, h2]
+  have := sumList_ge_member I.jobs (runningAt I S t) u hu
+  unfold busy; omega
+
+theorem sumTo_congr (f g : Nat → Nat) (h : ∀ t, f t = g t) (n : Nat) :
+    sumTo f n = sumTo g n := by
+  induction n with
+  | zero => rfl
+  | succ n ih => simp only [sumTo]; rw [ih, h n]
+
+/-- A function bounded by `c` on `[a, a + k)` adds at most `k * c` there. -/
+theorem sumTo_le_add_mul (f : Nat → Nat) (c a k : Nat)
+    (hf : ∀ t, a ≤ t → t < a + k → f t ≤ c) : sumTo f (a + k) ≤ sumTo f a + k * c := by
+  induction k with
+  | zero => simp
+  | succ k ih =>
+    rw [← Nat.add_assoc]
+    simp only [sumTo]
+    have h1 := ih (fun t h h' => hf t h (by omega))
+    have h2 := hf (a + k) (by omega) (by omega)
+    rw [Nat.succ_mul]
+    omega
+
+/--
+  Before job `v` starts, a greedy schedule leaves at most `(m - 1) * H v`
+  slot-instants unused: an instant with a free slot either lies inside the
+  run of some prerequisite on `v`'s chain (so at least one slot is busy), or
+  `v` would already have been started.
+-/
+theorem gap_before_start_le (hV : Valid I S) (hG : Greedy I S)
+    (hpos : ∀ u ∈ I.jobs, 1 ≤ I.dur u)
+    (H : TargetName → Nat) (hH : ∀ v ∈ I.jobs, ∀ p ∈ I.pred v, H p + I.dur p ≤ H v) :
+    ∀ n, ∀ v ∈ I.jobs, S v = n → sumTo (gapAt I S) (S v) ≤ (I.m - 1) * H v := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    intro v hv hSv
+    by_cases hnil : I.pred v = []
+    · have hz : ∀ t, 0 ≤ t → t < S v → gapAt I S t = 0 := by
+        intro t _ ht
+        have hready : Ready I S t v := by intro p hp; rw [hnil] at hp; simp at hp
+        have := hG v hv t ht hready
+        unfold gapAt; omega
+      have := sumTo_eq_of_zero_between (gapAt I S) 0 (S v) (Nat.zero_le _) hz
+      rw [this]; simp [sumTo]
+    · obtain ⟨p, hp, hmax⟩ := exists_last_finisher I S (I.pred v) hnil
+      have hpj : p ∈ I.jobs := hV.pred_mem v hv p hp
+      have hfp : fin I S p ≤ S v := hV.prec v hv p hp
+      have hz : ∀ t, fin I S p ≤ t → t < S v → gapAt I S t = 0 := by
+        intro t h1 h2
+        have hready : Ready I S t v := fun q hq => Nat.le_trans (hmax q hq) h1
+        have := hG v hv t h2 hready
+        unfold gapAt; omega
+      have hEq := sumTo_eq_of_zero_between (gapAt I S) (fin I S p) (S v) hfp hz
+      -- While p runs, at least one slot is busy.
+      have hrun : ∀ t, S p ≤ t → t < S p + I.dur p → gapAt I S t ≤ I.m - 1 := by
+        intro t h1 h2
+        have := busy_pos_of_running I S p hpj t h1 h2
+        unfold gapAt; omega
+      have hStep := sumTo_le_add_mul (gapAt I S) (I.m - 1) (S p) (I.dur p) hrun
+      have hpos_p := hpos p hpj
+      have hlt : S p < n := by unfold fin at hfp; omega
+      have ihp := ih (S p) hlt p hpj rfl
+      have hHp := hH v hv p hp
+      have hmono : (I.m - 1) * (H p + I.dur p) ≤ (I.m - 1) * H v := Nat.mul_le_mul_left _ hHp
+      rw [Nat.mul_add] at hmono
+      unfold fin at hEq
+      rw [hEq]
+      rw [Nat.mul_comm (I.dur p) (I.m - 1)] at hStep
+      omega
+
+/--
+  Graham's bound in its tight form: `m * C ≤ W + (m - 1) * L`, i.e.
+  `C ≤ W / m + (1 - 1/m) * L`. For `m = 1` it says `C ≤ W`.
+-/
+theorem greedy_makespan_bound_tight (hV : Valid I S) (hG : Greedy I S)
+    (hpos : ∀ u ∈ I.jobs, 1 ≤ I.dur u)
+    (H : TargetName → Nat) (hH : ∀ v ∈ I.jobs, ∀ p ∈ I.pred v, H p + I.dur p ≤ H v)
+    (L : Nat) (hL : ∀ u ∈ I.jobs, H u + I.dur u ≤ L)
+    (C : Nat) (hC : ∀ u ∈ I.jobs, fin I S u ≤ C)
+    (j : TargetName) (hj : j ∈ I.jobs) (hjC : fin I S j = C) :
+    I.m * C ≤ work I + (I.m - 1) * L := by
+  -- Every instant: busy + gap = m (busy never exceeds m).
+  have hpt : ∀ t, busy I S t + gapAt I S t = I.m := by
+    intro t; have := hV.cap t; unfold gapAt; omega
+  have hsum : sumTo (fun t => busy I S t + gapAt I S t) C = sumTo (fun _ => I.m) C :=
+    sumTo_congr _ _ hpt C
+  rw [sumTo_add, sumTo_const, sumTo_busy_eq_work I S C hC] at hsum
+  have hgap_j := gap_before_start_le I S hV hG hpos H hH (S j) j hj rfl
+  -- During j's own run at least one slot is busy.
+  have hrun : ∀ t, S j ≤ t → t < S j + I.dur j → gapAt I S t ≤ I.m - 1 := by
+    intro t h1 h2
+    have := busy_pos_of_running I S j hj t h1 h2
+    unfold gapAt; omega
+  have hstep := sumTo_le_add_mul (gapAt I S) (I.m - 1) (S j) (I.dur j) hrun
+  unfold fin at hjC
+  rw [hjC] at hstep
+  have hLj := hL j hj
+  have hmono : (I.m - 1) * (H j + I.dur j) ≤ (I.m - 1) * L := Nat.mul_le_mul_left _ hLj
+  rw [Nat.mul_add] at hmono
+  rw [Nat.mul_comm (I.dur j) (I.m - 1)] at hstep
+  omega
+
 /-! ### 3. An executable checker for recorded schedules
 
 `maked --trace` records when every job started and how long it ran. The
