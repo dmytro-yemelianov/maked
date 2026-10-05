@@ -12,3 +12,4 @@
 /benchmarks/lua_test/lua-5.4.9/src/build.ninja
 /benchmarks/lua_test/lua-5.4.9.tar.gz
 .maked_log
+__pycache__/
