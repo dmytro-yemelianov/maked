@@ -101,7 +101,10 @@ def gen(rng, depth, vars_):
         v = rng.choice(vars_)
         return rng.choice([f"$({v}:.c=.o)", f"$({v}:%.c=%.o)", f"$({v}:c=)", f"${{{v}:.o=.c}}", f"$({v}:%=p_%)"])
     if f == "shell":
-        return f"$(shell echo {rng.choice(['hi', 'a  b', '$$HOME_UNSET', 'x;y'])})"
+        # Not a failing command: GNU make 4.3 (on CI) lets the output of a
+        # command that exits 127 through to stdout and returns nothing; 4.4
+        # and maked return it.
+        return f"$(shell echo {rng.choice(['hi', 'a  b', '$$HOME_UNSET', 'x;echo y'])})"
     if f == "error-free-eval":
         return f"$(eval EV := {g()})$(EV)"
     return f"$({f} {g()})"  # one-argument functions

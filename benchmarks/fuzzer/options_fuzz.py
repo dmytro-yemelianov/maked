@@ -48,7 +48,9 @@ def case(rng):
             phony.append(t)
     if phony:
         lines.insert(0, ".PHONY: " + " ".join(phony))
-    files = {"sub.mk": "sub:\n\t@echo sub X=$(X) EV=$(EV) MAKEFLAGS=$(filter-out --%,$(MAKEFLAGS))\n"}
+    # Flags only: GNU make 4.4 also lists command-line variables in a
+    # sub-make's $(MAKEFLAGS), 4.3 (on CI) does not.
+    files = {"sub.mk": "sub:\n\t@echo sub X=$(X) EV=$(EV) MAKEFLAGS=$(filter-out --% X=% EV=%,$(MAKEFLAGS))\n"}
     for t in names:
         if rng.random() < 0.3:
             files[t] = ""
