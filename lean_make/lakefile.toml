@@ -1,0 +1,10 @@
+name = "lean_make"
+version = "0.1.0"
+defaultTargets = ["lean_make"]
+
+[[lean_lib]]
+name = "LeanMake"
+
+[[lean_exe]]
+name = "lean_make"
+root = "Main"

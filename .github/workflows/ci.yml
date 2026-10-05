@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify & Test Gate (raps-ci)
+    # GitHub-hosted minutes are billing-blocked account-wide; select the shared
+    # box by its labels, never by bare `self-hosted` (other tenants' runners).
+    runs-on: [self-hosted, raps-ci, makeyd]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain PATH
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Show toolchain
+        run: |
+          rustc --version && cargo --version
+          elan --version && (cd lean_make && lake --version)
+          make --version | head -1; ninja --version
+
+      - name: Format
+        run: cargo fmt --manifest-path rust_make/Cargo.toml --check
+
+      - name: Clippy (advisory)
+        # 52 pre-existing lints; reported, not yet gating.
+        run: cargo clippy --manifest-path rust_make/Cargo.toml --all-targets 2>&1 | tee clippy.log; echo "::notice title=clippy::$(grep -c '^warning' clippy.log || true) warning lines"
+
+      - name: Test
+        run: cargo test --manifest-path rust_make/Cargo.toml
+
+      - name: Release build
+        run: cargo build --release --manifest-path rust_make/Cargo.toml
+
+      - name: Lean 4 formal model (lake build, no sorry)
+        run: |
+          cd lean_make
+          lake build
+          if grep -rnwE 'sorry|admit' LeanMake LeanMake.lean Main.lean; then
+            echo "::error::sorry/admit present in Lean sources"; exit 1
+          fi
+
+      - name: Differential fuzzer (makeyd vs GNU make vs Lean model)
+        run: python3 benchmarks/fuzzer/fuzz_runner.py

@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build a release for
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    # Everything cross-compiles on the raps-ci Linux x64 box: GitHub-hosted
+    # macOS/Windows images are billing-blocked for this account.
+    runs-on: [self-hosted, raps-ci, makeyd]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+          - x86_64-pc-windows-gnu
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+          - universal2-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Toolchain PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build and package
+        run: scripts/ci/package.sh "${{ matrix.target }}" "$TAG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: makeyd-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build]
+    runs-on: [self-hosted, raps-ci, makeyd]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: raw-artifacts
+
+      - name: Collect bundles and SHA256SUMS
+        run: |
+          set -euo pipefail
+          rm -rf release-dist && mkdir release-dist
+          find raw-artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release-dist/ \;
+          cd release-dist
+          sha256sum * > SHA256SUMS
+          ls -lh && cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: release-dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

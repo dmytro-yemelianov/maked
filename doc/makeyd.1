@@ -1,0 +1,254 @@
+.TH MAKEYD 1 "October 2026" "makeyd" "User Commands"
+.SH NAME
+makeyd \- High-Performance POSIX/GNU-Compatible Build Utility Certified with Lean 4 Formal Semantics
+.SH SYNOPSIS
+.B makeyd
+[\fB\-B\fR]
+[\fB\-b\fR]
+[\fB\-C\fR \fIdir\fR]
+[\fB\-e\fR]
+[\fB\-f\fR \fIfile\fR]
+[\fB\-h\fR]
+[\fB\-\-hash\fR]
+[\fB\-i\fR]
+[\fB\-j\fR [\fIN\fR]]
+[\fB\-k\fR]
+[\fB\-m\fR]
+[\fB\-n\fR]
+[\fB\-p\fR]
+[\fB\-\-profile\fR]
+[\fB\-q\fR]
+[\fB\-s\fR]
+[\fB\-t\fR]
+[\fB\-v\fR]
+[\fIVAR\fR=\fIVALUE\fR ...]
+[\fItarget\fR ...]
+
+.SH DESCRIPTION
+.B makeyd
+is a high-performance, memory-safe, dependency-directed build utility designed as a modern
+re-implementation of the classic Make build system. It adheres strictly to the
+.B IEEE Std 1003.1 (POSIX)
+specification, supports major
+.B GNU Make
+extensions (including core built-in text manipulation functions, pattern rules, and VPATH search),
+and features certified correctness proofs verified in the
+.B Lean 4
+theorem prover.
+
+Additionally,
+.B makeyd
+supports an optional cryptographic content hashing mode (\fB\-\-hash\fR) powered by a zero-dependency
+FIPS 180-4 compliant SHA-256 digest engine, tracking file contents and recipe changes in a local
+cache database (\fB.makeyd.db\fR) to achieve build hermeticity and resistance against filesystem timestamp tampering.
+
+.SH OPTIONS
+.TP
+.BI \-B ", " \-\-always\-make
+Unconditionally build all targets regardless of modification timestamps or hash records.
+.TP
+.BR \-b ", " \-m
+POSIX compatibility flags; ignored with no effect.
+.TP
+.BI \-C " dir"
+Change working directory to \fIdir\fR before parsing makefiles or executing target recipes.
+.TP
+.BI \-e ", " \-\-environment\-overrides
+Give environment variables precedence over macro definitions inside makefiles.
+Command-line macro assignments (\fIVAR=VAL\fR) retain strict top priority.
+.TP
+.BI \-f " file"
+Use \fIfile\fR as the makefile. If omitted,
+.B makeyd
+searches for \fBMakefile\fR and \fBmakefile\fR in the current working directory.
+.TP
+.BR \-h ", " \-\-help
+Print usage summary and options, then exit.
+.TP
+.B \-\-hash
+Enable cryptographic SHA-256 content hashing. Targets and prerequisites are evaluated based on
+content digests and recipe command strings rather than filesystem modification timestamps.
+Build records are cached in \fB.makeyd.db\fR.
+.TP
+.BR \-i ", " \-\-ignore\-errors
+Ignore non-zero return codes from all recipe commands.
+.TP
+.BI \-j " [N]"
+Execute recipes concurrently using \fIN\fR worker threads. If \fIN\fR is omitted, the concurrency
+level defaults to the system's available hardware thread count.
+.TP
+.BR \-k ", " \-\-keep\-going
+Continue processing independent branches of the dependency DAG even after encountering an error.
+.TP
+.BI \-n ", " \-\-dry\-run
+Print recipe commands that would be executed without actually executing them.
+.TP
+.BI \-p ", " \-\-print\-data\-base
+Print the complete internal database of variables, pattern rules, and explicit rules.
+.TP
+.B \-\-profile
+Display granular execution telemetry upon completion, including targets evaluated, rebuilt,
+up to date, commands dispatched, and elapsed wall-clock time.
+.TP
+.BI \-q ", " \-\-question
+Question mode: do not run any recipes. Return exit code 0 if all requested goals are up to date,
+or 1 if any target requires rebuilding.
+.TP
+.BR \-s ", " \-\-silent ", " \-\-quiet
+Do not echo recipe commands before executing them.
+.TP
+.BR \-t ", " \-\-touch
+Touch targets (updating their filesystem timestamp to current time or creating empty files)
+instead of executing recipe commands.
+.TP
+.BR \-v ", " \-\-version
+Print version, standards compliance information, and formal verification credentials, then exit.
+
+.SH AUTOMATIC VARIABLES
+The following POSIX automatic variables are dynamically populated in recipe command scopes:
+.TP
+.B $@
+The name of the target currently being made.
+.TP
+.B $<
+The name of the first prerequisite in the rule.
+.TP
+.B $^
+The names of all prerequisites in the rule, separated by spaces, with duplicate entries removed.
+.TP
+.B $*
+The stem of the target (target filename stripped of its suffix or pattern match).
+.TP
+.B $$
+A literal dollar sign character.
+
+.SH BUILT-IN FUNCTIONS
+.B makeyd
+implements the complete GNU Make standard function library:
+.TP
+.B $(wildcard \fIpattern ...\fR)
+Expands to a space-separated list of existing files matching the glob pattern(s).
+.TP
+.B $(patsubst \fIpattern\fR,\fIreplacement\fR,\fItext\fR)
+Replaces words matching \fIpattern\fR with \fIreplacement\fR, preserving the matched stem (%).
+.TP
+.B $(subst \fIfrom\fR,\fIto\fR,\fItext\fR)
+Replaces every occurrence of substring \fIfrom\fR with \fIto\fR in \fItext\fR.
+.TP
+.B $(filter \fIpattern ...\fR,\fItext\fR)
+Returns words in \fItext\fR that match any of the given patterns.
+.TP
+.B $(filter-out \fIpattern ...\fR,\fItext\fR)
+Returns words in \fItext\fR that do not match any of the given patterns.
+.TP
+.B $(dir \fInames ...\fR)
+Extracts the directory component of each file name.
+.TP
+.B $(notdir \fInames ...\fR)
+Extracts the non-directory file name component of each name.
+.TP
+.B $(suffix \fInames ...\fR)
+Extracts the suffix (extension including dot) of each file name.
+.TP
+.B $(basename \fInames ...\fR)
+Extracts the basename (file name without suffix) of each file name.
+.TP
+.B $(addprefix \fIprefix\fR,\fInames ...\fR)
+Prepends \fIprefix\fR to each word.
+.TP
+.B $(addsuffix \fIsuffix\fR,\fInames ...\fR)
+Appends \fIsuffix\fR to each word.
+.TP
+.B $(join \fIlist1\fR,\fIlist2\fR)
+Joins words in \fIlist1\fR and \fIlist2\fR pairwise.
+.TP
+.B $(word \fIn\fR,\fItext\fR)
+Returns the 1-indexed \fIn\fR-th word of \fItext\fR.
+.TP
+.B $(words \fItext\fR)
+Returns the number of whitespace-separated words in \fItext\fR.
+.TP
+.B $(firstword \fInames ...\fR)
+Returns the first word of \fInames\fR.
+.TP
+.B $(lastword \fInames ...\fR)
+Returns the last word of \fInames\fR.
+.TP
+.B $(sort \fIlist\fR)
+Sorts words lexicographically and removes duplicates.
+.TP
+.B $(strip \fIstring\fR)
+Strips leading and trailing whitespace and collapses internal whitespace runs into single spaces.
+.TP
+.B $(shell \fIcommand\fR)
+Executes \fIcommand\fR in a subshell, replacing newlines with spaces and returning standard output.
+.TP
+.B $(if \fIcondition\fR,\fIthen-part\fR[,\fIelse-part\fR])
+Conditionally evaluates and expands arguments.
+.TP
+.B $(or \fIc1\fR[,\fIc2 ...\fR])
+Returns the first non-empty expansion.
+.TP
+.B $(and \fIc1\fR[,\fIc2 ...\fR])
+Returns the last expansion if all are non-empty; otherwise expands to empty.
+
+.SH VPATH SEARCH
+When a target or prerequisite does not exist in the current working directory,
+.B makeyd
+searches directory search paths specified via:
+.IP 1.
+The \fBvpath\fR directive: \fBvpath\fR \fIpattern\fR \fIdirectories ...\fR
+.IP 2.
+The \fBVPATH\fR environment or makefile variable (colon- or space-separated list of paths).
+.PP
+When found, the prerequisite path is updated so automatic variables ($<, $^) reflect the actual location.
+
+.SH FORMAL VERIFICATION
+The operational semantics of
+.B makeyd
+are formally specified and mechanically certified in
+.B Lean 4
+(\fIlean_make/LeanMake/Theorems.lean\fR).
+Verified theorems include:
+.IP \(bu 2
+\fBexecuteRule_clock_monotonic\fR: Build clock advances monotonically.
+.IP \(bu 2
+\fBphony_always_rebuilds\fR: Phony rules with commands unconditionally rebuild.
+.IP \(bu 2
+\fBmissing_always_rebuilds\fR: Missing targets unconditionally trigger recipe execution.
+.IP \(bu 2
+\fBupToDate_needs_no_rebuild\fR: Fresh target states require zero rebuilds.
+.IP \(bu 2
+\fBcycle_trace_head\fR: Graph cycle detector correctly pinpoints recursion culprits.
+.IP \(bu 2
+\fBrebuild_strictly_fresher_than_dep\fR: Target timestamp strictly exceeds all prerequisite timestamps upon rebuild.
+.IP \(bu 2
+\fBexecuteRule_upToDate_idempotent\fR: Certified single-step and inductive DAG idempotency under POSIX freshness.
+
+.SH EXIT STATUS
+.TP
+.B 0
+Successful completion; or in question mode (\fB\-q\fR), all targets are up to date.
+.TP
+.B 1
+A recipe command exited with an error; or in question mode (\fB\-q\fR), one or more targets require rebuilding.
+.TP
+.B 2
+A makefile syntax error, circular dependency cycle, or fatal invocation error occurred.
+
+.SH CONFORMANCE
+.B makeyd
+strictly complies with:
+.IP \(bu 2
+.B IEEE Std 1003.1-2017 (POSIX.1)
+Make utility specification.
+.IP \(bu 2
+.B GNU Make 4.4+
+macro, function, and pattern rule extensions.
+.IP \(bu 2
+.B FIPS 180-4
+Secure Hash Standard (SHA-256).
+
+.SH SEE ALSO
+.BR make (1),
+.BR gmake (1)

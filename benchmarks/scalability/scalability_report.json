@@ -1,0 +1,242 @@
+{
+  "environment": {
+    "os": "macOS (Apple Silicon arm64)",
+    "makeyd": "v0.1.0 (Zero-Dependency Rust)",
+    "gmake": "GNU Make 4.4.1",
+    "ninja": "1.12.1"
+  },
+  "scenarios": {
+    "Modular_1000": {
+      "topology": "modular",
+      "target_count": 1000,
+      "null_build_latency": {
+        "makeyd": {
+          "mean_ms": 5.35,
+          "stddev_ms": 0.84,
+          "min_ms": 4.66,
+          "max_ms": 8.13
+        },
+        "gmake": {
+          "mean_ms": 3.31,
+          "stddev_ms": 0.29,
+          "min_ms": 2.98,
+          "max_ms": 4.03
+        },
+        "ninja": {
+          "mean_ms": 56.28,
+          "stddev_ms": 202.02,
+          "min_ms": 3.63,
+          "max_ms": 786.55
+        }
+      },
+      "dry_run_latency": {
+        "makeyd -n": {
+          "mean_ms": 4.62
+        },
+        "gmake -n": {
+          "mean_ms": 3.05
+        },
+        "ninja -n": {
+          "mean_ms": 4.19
+        }
+      },
+      "peak_rss": {
+        "makeyd": 4992.0,
+        "gmake": 3152.0
+      },
+      "parallel_build_scaling": {
+        "-j1": {
+          "elapsed_sec": 0.009,
+          "peak_rss_kb": 4256.0
+        },
+        "-j4": {
+          "elapsed_sec": 0.01,
+          "peak_rss_kb": 4832.0
+        },
+        "-j8": {
+          "elapsed_sec": 0.012,
+          "peak_rss_kb": 4944.0
+        },
+        "-j16": {
+          "elapsed_sec": 0.009,
+          "peak_rss_kb": 5152.0
+        }
+      },
+      "cold_build_time_sec": 0.1368057920044521
+    },
+    "Diamond_2500": {
+      "topology": "diamond",
+      "target_count": 2500,
+      "null_build_latency": {
+        "makeyd": {
+          "mean_ms": 38.72,
+          "stddev_ms": 3.24,
+          "min_ms": 35.53,
+          "max_ms": 48.32
+        },
+        "gmake": {
+          "mean_ms": 8.27,
+          "stddev_ms": 0.74,
+          "min_ms": 7.44,
+          "max_ms": 10.72
+        },
+        "ninja": {
+          "mean_ms": 130.38,
+          "stddev_ms": 483.24,
+          "min_ms": 4.96,
+          "max_ms": 1877.21
+        }
+      },
+      "dry_run_latency": {
+        "makeyd -n": {
+          "mean_ms": 23.37
+        },
+        "gmake -n": {
+          "mean_ms": 8.78
+        },
+        "ninja -n": {
+          "mean_ms": 5.43
+        }
+      },
+      "peak_rss": {
+        "makeyd": 12928.0,
+        "gmake": 3408.0
+      },
+      "parallel_build_scaling": {
+        "-j1": {
+          "elapsed_sec": 0.025,
+          "peak_rss_kb": 10352.0
+        },
+        "-j4": {
+          "elapsed_sec": 0.042,
+          "peak_rss_kb": 12528.0
+        },
+        "-j8": {
+          "elapsed_sec": 0.041,
+          "peak_rss_kb": 12288.0
+        },
+        "-j16": {
+          "elapsed_sec": 0.041,
+          "peak_rss_kb": 12336.0
+        }
+      },
+      "cold_build_time_sec": 1.066677124996204
+    },
+    "Modular_5000": {
+      "topology": "modular",
+      "target_count": 5000,
+      "null_build_latency": {
+        "makeyd": {
+          "mean_ms": 19.9,
+          "stddev_ms": 0.93,
+          "min_ms": 19.04,
+          "max_ms": 22.02
+        },
+        "gmake": {
+          "mean_ms": 9.5,
+          "stddev_ms": 1.64,
+          "min_ms": 8.62,
+          "max_ms": 15.35
+        },
+        "ninja": {
+          "mean_ms": 289.25,
+          "stddev_ms": 1058.83,
+          "min_ms": 14.29,
+          "max_ms": 4116.68
+        }
+      },
+      "dry_run_latency": {
+        "makeyd -n": {
+          "mean_ms": 19.19
+        },
+        "gmake -n": {
+          "mean_ms": 8.23
+        },
+        "ninja -n": {
+          "mean_ms": 15.06
+        }
+      },
+      "peak_rss": {
+        "makeyd": 11296.0,
+        "gmake": 5728.0
+      },
+      "parallel_build_scaling": {
+        "-j1": {
+          "elapsed_sec": 0.021,
+          "peak_rss_kb": 8992.0
+        },
+        "-j4": {
+          "elapsed_sec": 0.025,
+          "peak_rss_kb": 11120.0
+        },
+        "-j8": {
+          "elapsed_sec": 0.024,
+          "peak_rss_kb": 11216.0
+        },
+        "-j16": {
+          "elapsed_sec": 0.024,
+          "peak_rss_kb": 11472.0
+        }
+      },
+      "cold_build_time_sec": 0.029096250000293367
+    },
+    "Modular_10000": {
+      "topology": "modular",
+      "target_count": 10000,
+      "null_build_latency": {
+        "makeyd": {
+          "mean_ms": 37.36,
+          "stddev_ms": 2.14,
+          "min_ms": 35.39,
+          "max_ms": 43.96
+        },
+        "gmake": {
+          "mean_ms": 16.22,
+          "stddev_ms": 0.86,
+          "min_ms": 15.26,
+          "max_ms": 17.79
+        },
+        "ninja": {
+          "mean_ms": 558.68,
+          "stddev_ms": 2048.18,
+          "min_ms": 28.06,
+          "max_ms": 7962.41
+        }
+      },
+      "dry_run_latency": {
+        "makeyd -n": {
+          "mean_ms": 38.08
+        },
+        "gmake -n": {
+          "mean_ms": 16.31
+        },
+        "ninja -n": {
+          "mean_ms": 29.7
+        }
+      },
+      "peak_rss": {
+        "makeyd": 21248.0,
+        "gmake": 9104.0
+      },
+      "parallel_build_scaling": {
+        "-j1": {
+          "elapsed_sec": 0.039,
+          "peak_rss_kb": 16544.0
+        },
+        "-j4": {
+          "elapsed_sec": 0.042,
+          "peak_rss_kb": 20992.0
+        },
+        "-j8": {
+          "elapsed_sec": 0.04,
+          "peak_rss_kb": 21136.0
+        },
+        "-j16": {
+          "elapsed_sec": 0.039,
+          "peak_rss_kb": 21312.0
+        }
+      },
+      "cold_build_time_sec": 0.05797879100282444
+    }
+  }
+}
