@@ -185,6 +185,12 @@ pub fn run_worker_daemon(
 ) -> std::io::Result<()> {
     let addrs = check_listen_addr(listen_addr, allow_remote)?;
     let listener = TcpListener::bind(&addrs[..])?;
+    run_worker_daemon_on(listener, auth)
+}
+
+/// Serve worker requests on an already bound listener (tests bind port 0
+/// themselves, so no other process can take the port in between).
+pub fn run_worker_daemon_on(listener: TcpListener, auth: WorkerAuth) -> std::io::Result<()> {
     println!(
         "maked worker daemon listening on {} (token required)",
         listener.local_addr()?

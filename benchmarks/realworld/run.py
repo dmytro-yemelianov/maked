@@ -97,7 +97,9 @@ def fetch(name, spec):
     path = CACHE / spec["url"].rsplit("/", 1)[1]
     if not path.exists():
         print(f"    fetching {spec['url']}")
-        urllib.request.urlretrieve(spec["url"], path)
+        req = urllib.request.Request(spec["url"], headers={"User-Agent": "curl/8 (maked realworld suite)"})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            path.write_bytes(r.read())
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if digest != spec["sha256"]:
         raise SystemExit(f"{name}: sha256 mismatch: {digest}")

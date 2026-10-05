@@ -11,22 +11,11 @@ fn auth() -> maked::distributed::WorkerAuth {
 }
 
 fn spawn_daemon() -> String {
-    let port = get_free_port();
-    let addr = format!("127.0.0.1:{port}");
-    let a = addr.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
     thread::spawn(move || {
-        let _ = maked::distributed::run_worker_daemon(&a, auth(), false);
+        let _ = maked::distributed::run_worker_daemon_on(listener, auth());
     });
-    // Wait until the daemon accepts connections (a fixed sleep is flaky
-    // when the whole suite runs in parallel).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while TcpStream::connect(&addr).is_err() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "worker daemon did not start"
-        );
-        thread::sleep(std::time::Duration::from_millis(10));
-    }
     addr
 }
 
