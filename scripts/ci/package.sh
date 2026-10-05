@@ -4,7 +4,7 @@
 # Usage: scripts/ci/package.sh <target> <tag>
 #
 # Linux musl links with Rust's self-contained rust-lld; Windows uses the box's
-# mingw-w64; Apple targets go through cargo-zigbuild. zig and cargo-zigbuild
+# mingw-w64; Linux glibc and Apple targets go through cargo-zigbuild. zig and cargo-zigbuild
 # are installed into the runner's own tool cache, not system-wide, because the
 # raps-ci box is shared with other tenants.
 set -euo pipefail
@@ -38,6 +38,13 @@ case "$target" in
     rustup target add "$target"
     RUSTFLAGS="-C linker=rust-lld -C link-self-contained=yes" \
       cargo build --release --locked --target "$target" --manifest-path "$manifest"
+    ;;
+  *-linux-gnu)
+    # glibc 2.17 symbols, so the binary runs on any distribution since 2014.
+    # Faster than the musl build: musl's malloc slows maked's parser ~1.5x.
+    rustup target add "$target"
+    ensure_zigbuild
+    cargo zigbuild --release --locked --target "$target.2.17" --manifest-path "$manifest"
     ;;
   x86_64-pc-windows-gnu)
     rustup target add "$target"

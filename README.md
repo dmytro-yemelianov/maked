@@ -28,12 +28,18 @@ contains the man page (`man/maked.1`) and bash/zsh/fish completions.
 
 | Platform | Archive |
 | --- | --- |
+| Linux x86_64 (glibc 2.17+) | `maked-<tag>-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux aarch64 (glibc 2.17+) | `maked-<tag>-aarch64-unknown-linux-gnu.tar.gz` |
 | Linux x86_64 (static, musl) | `maked-<tag>-x86_64-unknown-linux-musl.tar.gz` |
 | Linux aarch64 (static, musl) | `maked-<tag>-aarch64-unknown-linux-musl.tar.gz` |
 | macOS Apple Silicon | `maked-<tag>-aarch64-apple-darwin.tar.gz` |
 | macOS Intel | `maked-<tag>-x86_64-apple-darwin.tar.gz` |
 | macOS universal | `maked-<tag>-universal2-apple-darwin.tar.gz` |
 | Windows x86_64 | `maked-<tag>-x86_64-pc-windows-gnu.zip` |
+
+On Linux, prefer the glibc archive. The static musl build is for systems
+without glibc (Alpine, scratch containers); musl's allocator makes it about
+1.5× slower on large makefiles.
 
 macOS binaries are cross-built and not notarized. After extracting, run
 `xattr -d com.apple.quarantine maked`.
@@ -123,7 +129,7 @@ worker is unreachable or fails, the target is built locally.
 ## CI and releases
 
 Workflows run on the shared self-hosted `raps-ci` box
-(`runs-on: [self-hosted, raps-ci, maked]`). All six release targets are
+(`runs-on: [self-hosted, raps-ci, maked]`). All eight release targets are
 cross-compiled there by `scripts/ci/package.sh`. Pushing a `v*` tag builds the
 targets and publishes a GitHub Release with `SHA256SUMS`. To provision a
 runner, use `scripts/ci/provision-raps-ci-runner.sh`.

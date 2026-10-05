@@ -1,6 +1,6 @@
 # Inside maked: a make in Rust, a model in Lean, and the benchmark that lied
 
-*Dmytro Yemelianov · October 2026 · [maked v0.2.1](https://github.com/dmytro-yemelianov/maked/releases/tag/v0.2.1)*
+*Dmytro Yemelianov · October 2026 · [maked v0.2.2](https://github.com/dmytro-yemelianov/maked/releases/tag/v0.2.2)*
 
 maked ("make + ed: Yemelianov (Emelyanov) Dmytro") is a POSIX make (IEEE Std 1003.1) with
 the GNU extensions people actually use. It is written in Rust with zero
@@ -331,9 +331,9 @@ except for Lua, which really compiles.
   implicit-rule search, and a binary log. A make has to re-parse and
   re-evaluate the Makefile on every run.
 - **On null builds, maked is 1.5–2.1× faster than GNU make on modular
-  and wide graphs.** On diamond and deep graphs it is still 1.7× slower,
-  which is 13 against 8 ms and 13 against 7 ms: coordinating worker
-  threads on graphs with almost no parallelism.
+  and wide graphs.** On diamond and deep graphs it was 1.7× slower in this
+  run, 13 against 8 ms and 13 against 7 ms. v0.2.2 brought that down to
+  1.1–1.2× (see below).
 - **On cold builds, maked now matches or beats GNU make.** It is 15–17%
   faster on modular 5,000 and 10,000, and tied on the diamond and the
   deep chain. Modular 1,000 is within noise (0.27 ± 0.12 against 0.23 s).
@@ -416,6 +416,61 @@ make: 2.1 ms). A git null build on macOS went from 670 to about 420 ms
 (GNU make: 360–400 ms). Its remaining time is mostly waiting for git's
 roughly 40 `$(shell)` calls, which GNU make makes too.
 
+### v0.2.2: null builds on deep graphs, and git on Linux
+
+What was left after v0.2.0 was the null build on graphs with little
+parallelism, and git's null build on Linux (0.48 s against GNU make's
+0.33 s). I profiled with `sample` on macOS and `strace -c` on Linux, and
+used a 160,000-node diamond so that per-node costs stood out. The causes:
+
+1. **A copy of the whole makefile for the worker threads.** The parallel
+   executor cloned the `Makefile` (every rule and variable) to hand it to
+   its threads. They now borrow it through scoped threads.
+2. **Copying rules.** Every rule lookup returned a fresh copy of the rule,
+   and git's objects carry about 100 prerequisites each. Rules are now
+   shared (`Arc`), and the graph is built from the parsed prerequisites
+   without a lookup per node.
+3. **Quadratic `+=`.** git's `$(eval $(foreach …))` for the Coccinelle
+   matrix generates 224,000 lines with about 11,000 `+=` on the same
+   variables, and each one copied the whole value. `+=` now appends in place.
+4. **Smaller per-node costs.** SipHash on the hot maps (now an Fx-style
+   hash), two `stat`s per target (now one, cached), a critical-path
+   analysis on null builds where nothing ran, and freeing 100,000 rules
+   just before the process exits.
+5. **Parser allocations.** Every line was copied before it was read, and
+   every prerequisite went through a one-element `Vec`. Lines are now
+   borrowed from the file unless they have continuations.
+
+Two of the causes were also compatibility bugs:
+
+- **A rule run twice.** git's `GIT-VERSION-FILE: FORCE` is an included
+  makefile, so it is remade first, and maked then remade it again for the
+  goals. GNU make treats a target updated while remaking the makefiles as
+  done for the rest of the run. maked now does too, and `GIT-VERSION-GEN`
+  runs once.
+- **Pattern rules and directories.** A pattern without a `/` is matched
+  against the file name alone, and the directory goes back in front of each
+  prerequisite made from the pattern. With `%.o: src/%.c`, `a/b.o` comes
+  from `a/src/b.c`, not `src/a/b.c`, and `e%t` matches `src/eat` with
+  `$*` = `src/a`. maked matched the whole path. Its probes for the
+  built-in RCS and SCCS rules therefore went to paths like
+  `RCS/./.depend/x.o.d`. Fixing this, and not stat'ing a missing file twice
+  when there is no vpath, took git's failed `stat` calls from 18,954 to
+  10,200.
+
+Null builds after these changes, at `-j8`:
+
+| | maked | GNU make |
+| --- | ---: | ---: |
+| deep chain, 2,000 (macOS, ms) | 7.8 ± 1.0 | 6.7 ± 0.6 |
+| diamond lattice, 2,500 (macOS, ms) | 8.9 ± 0.5 | 8.0 ± 0.5 |
+| git 2.46.0 (macOS, ms) | 345 ± 14 | 402 ± 55 |
+| git 2.46.0 (Linux x86_64, s, mean of 10) | 0.38 | 0.33 |
+
+The macOS deep and diamond numbers are 100 hyperfine runs each. The git
+runs on macOS are 15, and GNU make's were noisy (σ 55 ms). On Linux, git's
+null build went from 0.48 to 0.38 s.
+
 ## 5. Real projects
 
 Random DAGs exercise scheduling and freshness, but real makefiles exercise
@@ -483,13 +538,20 @@ runners aren't available for this account. So every release target is
 
 | Target | How it is built |
 | --- | --- |
+| `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` | `cargo-zigbuild` against glibc 2.17 (runs on CentOS 7 and later) |
 | `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl` | Rust's self-contained `rust-lld`; static binaries |
 | `x86_64-pc-windows-gnu` | mingw-w64 |
 | `aarch64-apple-darwin`, `x86_64-apple-darwin`, `universal2-apple-darwin` | `cargo-zigbuild` with Zig as the linker |
 
+Until v0.2.2 the Linux archives were musl only, and they were slow: a git
+null build took 1.33 s with the v0.2.1 musl binary, against 0.48 s for the
+same code linked with glibc. musl's `malloc` is the difference, and maked
+allocates a lot while parsing. The glibc builds are now the default
+download. The musl ones remain for systems without glibc.
+
 Zig and cargo-zigbuild are installed into the runner's own tool cache, not
 system-wide, because other projects share the box. Pushing a `v*` tag builds
-all six targets, writes `SHA256SUMS` and publishes the GitHub Release. The
+all eight targets, writes `SHA256SUMS` and publishes the GitHub Release. The
 v0.1.0 binaries were run by hand on macOS arm64 and x86_64, on Linux x86_64,
 and on Linux aarch64 (in a container). The Windows binary is
 checked under Wine 10 by `scripts/ci/windows-wine-smoke.sh`: recipes through
@@ -512,9 +574,11 @@ microcontrollers would be a different product.
 ## 7. Known gaps
 
 - On graphs with almost no parallelism (diamond, deep chains), null builds
-  are still about 1.7× slower than GNU make (13 against 7–8 ms).
-- A git null build spends about 60 ms more than GNU make in makefile
-  parsing.
+  are still 1.1–1.2× slower than GNU make (about 1 ms on 2,000 nodes).
+- A git null build on Linux takes 0.38 s against GNU make's 0.33 s. GNU make
+  answers "does this file exist" from a cache of directory listings. maked
+  calls `stat`, and still makes about 10,000 failing calls, mostly for the
+  built-in RCS and SCCS rules.
 - Remote workers authenticate every request with a shared token (since
   v0.1.3: HMAC-SHA256 over a per-connection nonce, loopback by default,
   sandboxed relative paths), but traffic is **not encrypted**. Between
