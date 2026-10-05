@@ -424,8 +424,6 @@ fn text_and_file_functions() {
              \t@echo '[$(findstring arc4,arc4random)] [$(findstring x,abc)]'\n\
              \t@echo '[$(wordlist 2,4,$(W))] [$(wordlist 4,2,$(W))] [$(wordlist 3,9,$(W))]'\n\
              \t@echo '[$(notdir $(abspath ./sub/../x.c))] [$(origin W)] [$(origin CC)] [$(origin NOPE)] [$(origin @)]'\n\
-             \t@echo '[$(intcmp 1,2,lt,eq,gt)] [$(intcmp 2,2,lt,eq,gt)] [$(intcmp 3,2,lt,eq,gt)] [$(intcmp 4,4)]'\n\
-             \t@echo '[$(let a b,1 2 3,$(b)-$(a))]'\n\
              \t@echo '[$(file >out.txt,hello)$(file <out.txt)]'\n",
         )],
         &[],

@@ -174,3 +174,49 @@ fn test_recursive_submake_inherits_parallelism() {
         "sub-make ran serially: {elapsed:?}"
     );
 }
+
+/// GNU make as a sub-make under maked's jobserver. gcc's LTO wrapper does
+/// this with whatever `make` is installed (GNU make 4.3 on Ubuntu 24.04),
+/// which rejects the `fifo:` auth form.
+#[test]
+fn test_gnu_make_under_maked_jobserver() {
+    let gmake = ["gmake", "make"].into_iter().find(|c| {
+        Command::new(c)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("GNU Make"))
+    });
+    let Some(gmake) = gmake else { return };
+    let dir = std::env::temp_dir().join(format!("maked_gnu_child_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(
+        dir.join("sub/Makefile"),
+        "all: a b\na:\n\t@echo child-a\nb:\n\t@echo child-b\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Makefile"),
+        format!("all:\n\t+@{gmake} -s -C sub\n"),
+    )
+    .unwrap();
+    let out = Command::new(get_maked_bin())
+        .arg("-C")
+        .arg(&dir)
+        .arg("-j4")
+        .env_remove("MAKEFLAGS")
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(
+        !err.contains("jobserver"),
+        "GNU make complained about the jobserver: {err}"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("child-a") && stdout.contains("child-b"),
+        "{stdout}"
+    );
+}

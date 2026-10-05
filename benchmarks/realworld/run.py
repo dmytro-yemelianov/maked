@@ -215,12 +215,12 @@ def main():
             only_m = sorted(set(m.get("null_changed", [])) - set(g.get("null_changed", [])))
             problems.append(f"null build differs: maked also changed {len(only_m)} files: {only_m[:5]}")
         if set(m.get("produced", [])) != set(g.get("produced", [])):
-            only_m = sorted(set(m["produced"]) - set(g["produced"]))
-            only_g = sorted(set(g["produced"]) - set(m["produced"]))
+            only_m = sorted(set(m.get("produced", [])) - set(g.get("produced", [])))
+            only_g = sorted(set(g.get("produced", [])) - set(m.get("produced", [])))
             problems.append(f"produced files differ: only maked {only_m[:5]}, only GNU {only_g[:5]}")
         if set(m.get("incr_changed", [])) != set(g.get("incr_changed", [])):
-            only_m = sorted(set(m["incr_changed"]) - set(g["incr_changed"]))
-            only_g = sorted(set(g["incr_changed"]) - set(m["incr_changed"]))
+            only_m = sorted(set(m.get("incr_changed", [])) - set(g.get("incr_changed", [])))
+            only_g = sorted(set(g.get("incr_changed", [])) - set(m.get("incr_changed", [])))
             problems.append(f"incremental rebuild differs: only maked {only_m[:5]}, only GNU {only_g[:5]}")
         for tool, r in results.items():
             print(f"    {tool:7} build {r.get('build_seconds', '-')}s ok={r.get('build_ok')} "

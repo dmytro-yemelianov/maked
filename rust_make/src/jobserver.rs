@@ -3,18 +3,13 @@ use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::PathBuf;
-#[cfg(unix)]
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(unix)]
 unsafe extern "C" {
-    fn mkfifo(path: *const std::os::raw::c_char, mode: u32) -> std::os::raw::c_int;
+    fn pipe(fds: *mut std::os::raw::c_int) -> std::os::raw::c_int;
     fn unlink(path: *const std::os::raw::c_char) -> std::os::raw::c_int;
 }
-
-#[cfg(unix)]
-static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
@@ -122,40 +117,30 @@ impl JobServer {
         if requested_jobs > 1 {
             #[cfg(unix)]
             {
-                let pid = std::process::id();
-                let cnt = COUNTER.fetch_add(1, Ordering::SeqCst);
-                let tmp_dir = std::env::temp_dir();
-                let fifo_path = tmp_dir.join(format!("maked_jobserver_{pid}_{cnt}.fifo"));
-                let c_path = std::ffi::CString::new(fifo_path.to_str().unwrap()).unwrap();
-
-                let res = unsafe { mkfifo(c_path.as_ptr(), 0o600) };
-                if res != 0 {
+                // Master: an anonymous pipe passed as `--jobserver-auth=R,W`.
+                // Every GNU make since 4.2 understands this form; the
+                // `fifo:` form needs 4.4, and gcc's LTO wrapper runs whatever
+                // `make` is installed (4.3 on Ubuntu 24.04). pipe(2) leaves
+                // the descriptors inheritable, so recipes' children get them.
+                let mut fds = [0 as std::os::raw::c_int; 2];
+                if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
-
-                let file = OpenOptions::new().read(true).write(true).open(&fifo_path)?;
-                let mut write_file = file;
-                let read_file = write_file.try_clone()?;
-
-                // Write jobs - 1 tokens into the FIFO
+                let read_file = unsafe { File::from_raw_fd(fds[0]) };
+                let mut write_file = unsafe { File::from_raw_fd(fds[1]) };
                 let tokens_to_write = requested_jobs.saturating_sub(1);
                 if tokens_to_write > 0 {
-                    let tokens = vec![b'+'; tokens_to_write];
-                    write_file.write_all(&tokens)?;
+                    write_file.write_all(&vec![b'+'; tokens_to_write])?;
                     write_file.flush()?;
                 }
-
-                let auth = format!("fifo:{}", fifo_path.display());
                 return Ok(Self {
-                    mode: JobServerMode::Fifo {
-                        path: fifo_path,
-                        is_master: true,
+                    mode: JobServerMode::Pipe {
                         read_file,
                         write_file,
                     },
                     has_internal_token: AtomicBool::new(true),
                     jobs: requested_jobs,
-                    auth_str: Some(auth),
+                    auth_str: Some(format!("{},{}", fds[0], fds[1])),
                 });
             }
         }
@@ -403,40 +388,27 @@ mod tests {
     }
 
     #[test]
-    fn test_jobserver_master_fifo_and_client_exchange() {
+    fn test_jobserver_master_pipe_tokens() {
         let master = JobServer::detect_or_create(3, None).unwrap();
-        assert!(master.auth_str.is_some());
         let auth = master.auth_str.as_ref().unwrap();
-        assert!(auth.starts_with("fifo:"));
+        // `R,W` (GNU make >= 4.2), not `fifo:` (>= 4.4 only).
+        let (r, w) = auth.split_once(',').expect("R,W form");
+        assert!(
+            r.parse::<i32>().is_ok() && w.parse::<i32>().is_ok(),
+            "{auth}"
+        );
 
-        // Master acquires internal token
         let t1 = master.acquire().unwrap();
         assert_eq!(t1.token_type, TokenType::Internal);
-
-        // Master acquires 2 tokens from FIFO
         let t2 = master.acquire().unwrap();
-        assert_eq!(t2.token_type, TokenType::Fifo);
-
+        assert_eq!(t2.token_type, TokenType::Pipe);
         let t3 = master.acquire().unwrap();
-        assert_eq!(t3.token_type, TokenType::Fifo);
-
-        // Connect client to the same FIFO
-        let client = JobServer::detect_or_create(2, Some(auth)).unwrap();
-        let c1 = client.acquire().unwrap();
-        assert_eq!(c1.token_type, TokenType::Internal);
-
-        // Drop one master token to return it to the FIFO
+        assert_eq!(t3.token_type, TokenType::Pipe);
+        // Returning a token makes it available again.
         drop(t3);
-
-        // Now client should be able to acquire the freed token from FIFO!
-        let c2 = client.acquire().unwrap();
-        assert_eq!(c2.token_type, TokenType::Fifo);
-
-        // Release client token
-        drop(c2);
-        drop(c1);
-        drop(t2);
-        drop(t1);
+        let t4 = master.acquire().unwrap();
+        assert_eq!(t4.token_type, TokenType::Pipe);
+        drop((t1, t2, t4));
     }
 }
 
