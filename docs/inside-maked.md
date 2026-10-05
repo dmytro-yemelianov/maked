@@ -288,6 +288,36 @@ needs a worker.
   and reported as not compared.
 - **A complexity guard** (`benchmarks/scaling/scaling_check.py`): each of
   seven makefile shapes at size N and 4N; more than 7× the time fails.
+- **An expression fuzzer** (`expr_fuzz.py`): nested function calls,
+  substitution references and conditionals over awkward word lists, printed
+  with `$(info)` by both makes. 1,000/1,000 cases (25,000 expressions).
+- **A directive fuzzer** (`directive_fuzz.py`): `define`, `else if`
+  chains, target- and pattern-specific variables, `+=`/`?=`/`override` with
+  command-line variables, `export`, `vpath`, suffix rules, `include`.
+  300/300.
+- **An options fuzzer** (`options_fuzz.py`): failing recipes, `-`/`@`/`+`,
+  recursive `$(MAKE)`, under random `-n -k -i -B -s -e -t -j` and goal
+  lists. 600/600.
+
+### Finding what nothing checks
+
+`scripts/coverage.sh` builds an instrumented maked and runs only the
+checks that compare it with GNU make or the Lean model. The code they never
+reach is code whose GNU behaviour nothing checks. The first run showed the
+fuzzers had only ever generated rules: 55% of the parser was reached, and
+31% of the function library. Each gap became a generator, and each
+generator found bugs on its first run:
+
+| Generator | First run vs GNU make | Bugs, fixed |
+| --- | --- | --- |
+| expressions | 33/200 cases agreed | trailing whitespace in `:=` values and function arguments; `$(if)`/`$(or)`/`$(and)` stripping after expansion; `$(call)` trimming its arguments; `$(subst ,X,…)`; `$(eval)` not visible until the next line; `foreach`/`call` parameters expanded twice; `$(wordlist)` spacing; `*` matching dotfiles; `ifdef` on a space; `ifeq (a, b)` whitespace |
+| directives | 97/200 | no variable flavors (`+=` on `:=`, `$(flavor)` guessed); `override` losing to the command line; `define V +=`; target-specific variables not inherited by prerequisites, and `+=` on them computed at parse time |
+| options | 102/300 | `-t` (GNU's rules for `+` lines, `-n -t`, phony targets); `(ignored)` error lines; `-k` with several goals; per-goal messages; `$(MAKEFLAGS)` in sub-makes; a hang when `-t` failed under `-j` |
+
+The parser is now 87% covered by GNU-differential checks, the executor 86%,
+and maked as a whole 73% (most of the rest is maked's own options:
+`--trace`, `--cache`, `--tui`, Ninja, remote workers). The real projects
+still all match.
 
 All of it is evidence, not proof: a fuzzer says nothing about makefiles its
 generator never produces. That is how the bugs below got through.
