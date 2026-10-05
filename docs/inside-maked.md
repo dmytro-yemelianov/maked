@@ -1,6 +1,6 @@
 # Inside maked: a make in Rust, a model in Lean, and the benchmark that lied
 
-*Dmytro Yemelianov · October 2026 · [maked v0.2.0](https://github.com/dmytro-yemelianov/maked/releases/tag/v0.2.0)*
+*Dmytro Yemelianov · October 2026 · [maked v0.2.1](https://github.com/dmytro-yemelianov/maked/releases/tag/v0.2.1)*
 
 maked ("make + ed: Yemelianov (Emelyanov) Dmytro") is a POSIX make (IEEE Std 1003.1) with
 the GNU extensions people actually use. It is written in Rust with zero
@@ -294,35 +294,35 @@ works as follows:
   no shell);
 - every result is written to `fair_bench.json`.
 
-### Results (v0.1.1)
+### Results (v0.2.0)
 
 Machine: Apple M5 (10 cores), macOS (Darwin 27.2), GNU Make 4.4.1,
-Ninja 1.13.2, maked 0.1.1, all at `-j8`. Mean ± σ.
+Ninja 1.13.2, maked 0.2.0, all at `-j8`. Mean ± σ.
 
 **Null build (everything up to date), milliseconds.** Lower is better.
 
 | Graph | maked | GNU make | Ninja | maked peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| modular, 1,000 targets | 9.8 ± 0.8 | 18.2 ± 1.3 | **4.2 ± 0.4** | 6.5 MB |
-| modular, 5,000 | 43.9 ± 1.7 | 93.2 ± 8.9 | **15.7 ± 1.6** | 17.9 MB |
-| modular, 10,000 | 97.5 ± 17.3 | 186.1 ± 8.9 | **29.1 ± 1.3** | 32.9 MB |
-| wide fan-out, 5,000 | 71.5 ± 9.8 | 168.3 ± 24.7 | **26.3 ± 3.2** | 16.3 MB |
-| diamond lattice, 2,500 | 15.1 ± 0.9 | 7.3 ± 0.6 | **5.2 ± 0.5** | 7.8 MB |
-| deep chain, 2,000 | 9.9 ± 0.8 | 5.9 ± 0.4 | **3.9 ± 0.3** | 7.8 MB |
-| Lua 5.4.9 (real project) | 24.7 ± 3.2 | 23.7 ± 4.4 | — | — |
+| modular, 1,000 targets | 11.8 ± 0.3 | 17.4 ± 0.4 | **3.9 ± 0.2** | 7.6 MB |
+| modular, 5,000 | 54.6 ± 2.5 | 95.3 ± 3.2 | **17.1 ± 0.7** | 21.7 MB |
+| modular, 10,000 | 113.5 ± 3.8 | 201.0 ± 9.8 | **42.9 ± 19.4** | 39.8 MB |
+| wide fan-out, 5,000 | 59.5 ± 9.2 | 123.4 ± 31.6 | **22.9 ± 6.9** | 19.9 MB |
+| diamond lattice, 2,500 | 13.4 ± 0.5 | 8.0 ± 0.6 | **5.7 ± 0.4** | 9.2 MB |
+| deep chain, 2,000 | 12.6 ± 2.2 | 7.2 ± 0.7 | **4.7 ± 0.5** | 8.8 MB |
+| Lua 5.4.9 (real project) | 16.0 ± 2.2 | 13.5 ± 0.7 | — | — |
 
 **Cold build, seconds** (5 runs; Lua 3 runs). Every recipe is a `touch`,
 except for Lua, which really compiles.
 
 | Graph | maked | GNU make | Ninja |
 | --- | ---: | ---: | ---: |
-| modular, 1,000 | 0.44 ± 0.11 | **0.25 ± 0.01** | 0.70 ± 0.02 |
-| modular, 5,000 | 1.61 ± 0.04 | **1.21 ± 0.04** | 3.67 ± 0.25 |
-| modular, 10,000 | 3.09 ± 0.07 | **2.35 ± 0.05** | 6.98 ± 0.17 |
-| wide fan-out, 5,000 | **1.59 ± 0.18** | 20.38 ± 4.53 | 6.47 ± 0.63 |
-| diamond lattice, 2,500 | 0.76 ± 0.01 | **0.53 ± 0.03** | 1.78 ± 0.16 |
-| deep chain, 2,000 | 3.07 ± 0.06 | **2.02 ± 0.08** | 7.00 ± 0.15 |
-| Lua 5.4.9, `make macosx` | 1.07 ± 0.11 | **0.98 ± 0.10** | — |
+| modular, 1,000 | 0.27 ± 0.12 | **0.23 ± 0.00** | 0.73 ± 0.02 |
+| modular, 5,000 | **1.10 ± 0.04** | 1.29 ± 0.05 | 3.76 ± 0.07 |
+| modular, 10,000 | **2.25 ± 0.05** | 2.70 ± 0.13 | 8.77 ± 1.37 |
+| wide fan-out, 5,000 | **1.18 ± 0.10** | 12.25 ± 0.78 | 4.94 ± 0.77 |
+| diamond lattice, 2,500 | **0.50 ± 0.01** | 0.53 ± 0.02 | 1.77 ± 0.06 |
+| deep chain, 2,000 | 2.14 ± 0.11 | **2.13 ± 0.03** | 7.85 ± 0.36 |
+| Lua 5.4.9, `make macosx` | 0.77 ± 0.09 | **0.64 ± 0.02** | — |
 
 ### Reading the numbers
 
@@ -330,19 +330,20 @@ except for Lua, which really compiles.
   was built for: a pre-lowered manifest, no variable expansion, no
   implicit-rule search, and a binary log. A make has to re-parse and
   re-evaluate the Makefile on every run.
-- **On null builds, maked is 1.8–2.4× faster than GNU make on modular
-  and wide graphs, and ties on Lua.** On diamond and deep graphs it is
-  still 1.7–2.1× slower, which is 15 against 7 ms and 10 against 6 ms. The
-  remaining cost there is coordinating worker threads on graphs with
-  almost no parallelism.
-- **On cold synthetic builds, GNU make is 1.3–1.75× faster than maked,
-  and both makes beat Ninja by 2–3.5×.** The likely reason, which I have
-  not profiled: both makes `exec` simple recipes directly, while Ninja
-  always goes through `/bin/sh -c`. GNU make's 16–20 s on the wide fan-out
-  graph reproduces in every run, with high variance. I haven't explained it yet, so read
-  it as a measured anomaly, not a win.
-- **On Lua, maked and GNU make are at parity** for both full and null
-  builds.
+- **On null builds, maked is 1.5–2.1× faster than GNU make on modular
+  and wide graphs.** On diamond and deep graphs it is still 1.7× slower,
+  which is 13 against 8 ms and 13 against 7 ms: coordinating worker
+  threads on graphs with almost no parallelism.
+- **On cold builds, maked now matches or beats GNU make.** It is 15–17%
+  faster on modular 5,000 and 10,000, and tied on the diamond and the
+  deep chain. Modular 1,000 is within noise (0.27 ± 0.12 against 0.23 s).
+  Both makes beat Ninja by 2.5–3.9×, probably because Ninja always runs
+  recipes through `/bin/sh -c`. GNU make's 12 s on the wide fan-out graph
+  reproduces in every run. I haven't explained it yet, so read it as a
+  measured anomaly, not a win.
+- **Lua is noisy.** In this run maked took 0.77 s against GNU make's
+  0.64 s (3 runs). A separate hyperfine run of 6 full builds gave
+  539 ± 51 ms against 540 ± 10 ms. Null builds take about 14 ms for both.
 
 ### What v0.1.1 fixed
 
@@ -380,6 +381,40 @@ Two further speedups came from profiling the fixed build:
 Null builds from v0.1.0 to v0.1.1, end to end: the 2,000-long chain went
 from 62.6 ms to 9.9 ms, diamond from 37.7 ms to 15.1 ms, and modular 10,000
 from 223.6 ms to 97.5 ms.
+
+### v0.2.0: where the remaining time went
+
+The 0.1.x builds were 1.3–1.75× slower than GNU make on cold builds. I
+profiled them with `sample` on macOS and `strace -c` on Linux. These were
+the causes, in order of size:
+
+1. **PATH lookup on every spawn.** Rust's `Command` searches `PATH` each
+   time. 5,000 `touch` calls took 6.6 s by name and 5.0 s by absolute path;
+   GNU make took 5.7 s. maked now resolves each program once per `PATH`.
+2. **A copy of the environment for every spawn.** Setting `MAKEFLAGS` per
+   command made Rust build a new environment block each time (+0.7 s per
+   5,000). The exported variables and `MAKEFLAGS` are now set once in the
+   process, and children inherit them.
+3. **Thread QoS on macOS.** maked runs on a spawned thread, for its large
+   stack. That thread starts below the main thread's QoS class, and the
+   recipes it spawns inherited this and landed on efficiency cores: 2×
+   slower and very noisy (10.2 ± 2.4 s against 7.8 ± 0.5 s). The builder
+   and worker threads now take the main thread's class.
+4. **`stat` calls.** A git null build made 116,000 `statx` calls against
+   GNU make's 16,000. Every header was checked once per object that lists
+   it, and implicit-rule search ran again on every lookup. Rule lookups and
+   prerequisite mtimes are now cached for the run: 42,000 calls, and
+   1.21 s → 0.60 s on Linux.
+5. **Parsing.** Variable expansion built a `Vec<char>` for every fragment.
+   It now scans bytes and copies the text between references in one slice.
+   Simple commands, in recipes and in `$(shell)`, are split into argv the
+   way GNU make does, so `$(shell sh -c '...')` starts one shell, not two.
+   A bare `:` line runs no process at all.
+
+The per-process cost of a one-line recipe went from 4.4 ms to 1.9 ms (GNU
+make: 2.1 ms). A git null build on macOS went from 670 to about 420 ms
+(GNU make: 360–400 ms). Its remaining time is mostly waiting for git's
+roughly 40 `$(shell)` calls, which GNU make makes too.
 
 ## 5. Real projects
 
@@ -425,6 +460,19 @@ fuzzer never generates:
 Each fix has a differential test that runs the minimal case under both
 tools. All six projects now match GNU make on every check.
 
+Timings from one run of the suite at `-j8` on the M5 (single runs, so
+treat differences of a few percent as noise):
+
+| Project | maked build | GNU make build | maked null | GNU make null | maked rebuild after touch | GNU make rebuild after touch |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| zlib | 0.49 s | 0.49 s | 0.01 s | 0.01 s | 0.41 s | 0.45 s |
+| sqlite | 22.11 s | 21.89 s | 0.02 s | 0.02 s | 1.90 s | 1.84 s |
+| redis | 10.23 s | 10.38 s | 1.78 s | 1.82 s | 7.40 s | 7.33 s |
+| git | 9.82 s | 9.40 s | 0.42 s | 0.38 s | 9.27 s | 9.32 s |
+| jq | 4.70 s | 4.67 s | 0.34 s | 0.33 s | 2.11 s | 2.09 s |
+| lua | 0.59 s | 0.52 s | 0.03 s | 0.04 s | 0.54 s | 0.55 s |
+
+
 ## 6. Shipping it
 
 CI and releases run on **raps-ci**, a shared self-hosted Linux x86_64 box
@@ -464,8 +512,9 @@ microcontrollers would be a different product.
 ## 7. Known gaps
 
 - On graphs with almost no parallelism (diamond, deep chains), null builds
-  are still 1.7–2.1× slower than GNU make. Cold synthetic builds are
-  1.3–1.75× slower.
+  are still about 1.7× slower than GNU make (13 against 7–8 ms).
+- A git null build spends about 60 ms more than GNU make in makefile
+  parsing.
 - Remote workers authenticate every request with a shared token (since
   v0.1.3: HMAC-SHA256 over a per-connection nonce, loopback by default,
   sandboxed relative paths), but traffic is **not encrypted**. Between
@@ -473,8 +522,9 @@ microcontrollers would be a different product.
 - The jobserver and remote workers are Unix-only. On Windows, recipes run
   via `$SHELL` or `cmd.exe`.
 - The macOS binaries are not notarized.
-- No refinement proof connects the Lean model and the Rust code. Two
-  fuzzers are the bridge: one for rebuild decisions and one for schedules.
+- No refinement proof connects the Lean model and the Rust code. Three
+  fuzzers are the bridge: one for rebuild decisions, one for schedules and
+  one for `--cache`/`--hash`.
 - `.maked_log` is a new file in the build directory. Add it to
   `.gitignore`.
 - The approximations listed under *Compatibility* in the README: merged

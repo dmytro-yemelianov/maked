@@ -1,6 +1,6 @@
 [package]
 name = "maked"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "make + ed: Yemelianov (Emelyanov) Dmytro - POSIX IEEE Std 1003.1 conforming Make with Lean 4 formal semantics"
 authors = ["Yemelianov Dmytro"]
