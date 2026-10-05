@@ -16,6 +16,7 @@ fn print_help() {
            -B            Unconditionally make all targets\n  \
            -s, --silent  Don't echo recipe commands\n  \
            -q, --question 'Question' mode: return exit code 0 if up to date, 1 otherwise\n  \
+           -r, --no-builtin-rules  Don't use the built-in implicit rules\n  \
            -C DIR        Change to directory DIR before doing anything\n  \
            --profile     Display execution and profiling statistics\n  \
            --trace=FILE  Write Chrome Trace / Perfetto JSON timeline to FILE\n  \
@@ -81,6 +82,7 @@ fn real_main() -> ExitCode {
     let mut ignore_errors = false;
     let mut keep_going = false;
     let mut touch_only = false;
+    let mut no_builtin_rules = false;
     let mut env_overrides = false;
     let mut print_database = false;
     let mut chdir: Option<String> = None;
@@ -120,6 +122,8 @@ fn real_main() -> ExitCode {
             print_database = true;
         } else if arg == "-t" || arg == "--touch" {
             touch_only = true;
+        } else if arg == "-r" || arg == "--no-builtin-rules" {
+            no_builtin_rules = true;
         } else if arg == "--hash" {
             use_hash = true;
         } else if arg == "-f" && i + 1 < args.len() {
@@ -258,6 +262,7 @@ fn real_main() -> ExitCode {
             (keep_going, 'k'),
             (dry_run, 'n'),
             (question, 'q'),
+            (no_builtin_rules, 'r'),
             (silent, 's'),
             (touch_only, 't'),
         ] {
@@ -319,6 +324,12 @@ fn real_main() -> ExitCode {
             }
         }
     });
+
+    if no_builtin_rules {
+        // Built-in pattern rules are the ones not read from a makefile.
+        makefile.pattern_rules.retain(|p| p.line_number > 0);
+        makefile.clear_rule_cache();
+    }
 
     if print_database {
         println!("# Variables");
@@ -584,6 +595,14 @@ fn real_main() -> ExitCode {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "maked".to_string());
 
+    // Keep $(MAKE_RESTARTS) as a make variable; the environment copy is
+    // removed below so that recipes do not see it, as in GNU make.
+    if let Ok(v) = env::var("MAKE_RESTARTS") {
+        makefile
+            .variables
+            .entry("MAKE_RESTARTS".to_string())
+            .or_insert(v);
+    }
     let mut executor = Executor::with_jobserver(&makefile, &graph, config, jobserver);
     if let Some(settled) = remade {
         executor = executor.with_settled(settled);
@@ -594,6 +613,11 @@ fn real_main() -> ExitCode {
         let cur = env::var("MAKEFLAGS").unwrap_or_default();
         let mf = executor.jobserver.child_makeflags(&cur);
         maked::executor::install_process_env(&executor.recipe_env, &mf);
+        // MAKE_RESTARTS reaches this process through the environment when it
+        // re-executes itself, but GNU make keeps it a make variable only:
+        // recipes do not see it.
+        // SAFETY: as in install_process_env, no other thread exists yet.
+        unsafe { env::remove_var("MAKE_RESTARTS") };
     }
 
     for tgt in &run_targets {

@@ -516,6 +516,25 @@ fn included_makefiles_are_remade_and_reread() {
 }
 
 #[test]
+fn recipe_after_semicolon_and_empty_recipes() {
+    // `t: p ; recipe`, an `=` after the `;` (recipe text) and before it (a
+    // target-specific variable, `;` included); an empty recipe (`b.o: ;`)
+    // stops implicit rule search; a line expanding to nothing is skipped.
+    assert_same(
+        &[
+            (
+                "Makefile",
+                "all: x y t u w b.o e\nx: ; @echo x-ran\ny:;@echo y: ran a=b\n\
+             t: V = a;b\nt:\n\t@echo 't V=[$(V)]'\nu: p ; @echo u $^\np: ; @echo p\n\
+             w: ; @echo w1\n\t@echo w2\nb.o: ;\nE :=\ne:\n\t$(E)\n\t\n\t@echo e\n",
+            ),
+            ("b.c", ""),
+        ],
+        &[],
+    );
+}
+
+#[test]
 fn question_and_touch_skip_targets_without_a_recipe() {
     // `x` has no recipe: -q does not count it as work, -t does not create
     // it (a file named FORCE would break the idiom for good).

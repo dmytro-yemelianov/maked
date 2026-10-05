@@ -118,8 +118,31 @@ def runSchedule (file : String) : IO Unit := do
   IO.println s!"CRIT {Scheduling.criticalPath I S}"
   IO.println s!"MAKESPAN {Scheduling.makespan I S}"
 
+/-- `--pattern TPAT TARGET PREREQ...`: GNU make's match of a pattern rule
+(`LeanMake.Pattern`). Prints `MATCH no`, or the prerequisites and `$*`. -/
+def runPattern (tpat target : String) (prereqs : List String) : IO Unit := do
+  let toPat (s : String) : Option Pattern.Pat :=
+    match s.toList.splitOn '%' with
+    | pre :: rest@(_ :: _) => some ⟨pre, (rest.intersperse ['%']).flatten⟩
+    | _ => none
+  match toPat tpat with
+  | none => IO.println "MATCH no"
+  | some tp =>
+    match Pattern.matchTarget tp target.toList with
+    | none => IO.println "MATCH no"
+    | some (d, stem) =>
+      let ps := prereqs.map fun p =>
+        match toPat p with
+        | some pp => String.ofList ((Pattern.Prereq.pat pp).inst d stem)
+        | none => p
+      IO.println "MATCH yes"
+      IO.println s!"PREREQS {String.intercalate " " ps}"
+      IO.println s!"STEM {String.ofList (Pattern.stemVar d stem)}"
+
 def main (args : List String) : IO Unit := do
   match args with
+  | "--pattern" :: tpat :: target :: prereqs =>
+    runPattern tpat target prereqs
   | ["--schedule", file] =>
     runSchedule file
   | ["--eval", specFile] =>

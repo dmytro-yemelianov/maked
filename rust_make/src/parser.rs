@@ -1657,11 +1657,22 @@ pub fn parse_makefile_into(
     let mut cond_stack: Vec<(bool, bool)> = Vec::new();
 
     let mut line_idx = 0;
-    while line_idx < combined_lines.len() {
-        let (line_num, ref joined) = combined_lines[line_idx];
-        line_idx += 1;
-        let resolved =
-            resolve_continuations(joined, joined.starts_with('\t') && current_target.is_some());
+    // The recipe after `;` on a rule line (`t: p ; recipe`), read next as
+    // the rule's first recipe line.
+    let mut inline_recipe: Option<(usize, String)> = None;
+    while line_idx < combined_lines.len() || inline_recipe.is_some() {
+        let (line_num, joined): (usize, std::borrow::Cow<'_, str>) = match inline_recipe.take() {
+            Some((n, r)) => (n, std::borrow::Cow::Owned(r)),
+            None => {
+                let (n, ref j) = combined_lines[line_idx];
+                line_idx += 1;
+                (n, std::borrow::Cow::Borrowed(j.as_ref()))
+            }
+        };
+        let resolved = resolve_continuations(
+            &joined,
+            joined.starts_with('\t') && current_target.is_some(),
+        );
         let line = &resolved;
 
         // In a rule, a tab-led line is recipe text and keeps its '#'. Every
@@ -1764,7 +1775,7 @@ pub fn parse_makefile_into(
         }
 
         let line_trimmed_end = line.trim_end();
-        if line_trimmed_end.is_empty() {
+        if line_trimmed_end.is_empty() && !(line.starts_with('\t') && current_target.is_some()) {
             continue;
         }
 
@@ -1772,10 +1783,10 @@ pub fn parse_makefile_into(
         // tab-indented line as ordinary makefile text (redis indents
         // assignments and conditionals that way).
         if line.starts_with('\t') && current_target.is_some() {
+            // An empty line here is still a recipe line, as in GNU make: a
+            // rule with only `t: ;` or a tab-only line has an empty recipe,
+            // so no implicit rule is searched for it.
             let cmd = line[1..].trim();
-            if cmd.is_empty() {
-                continue;
-            }
             match current_target {
                 Some(TargetType::Normal(ref target_names)) => {
                     for target_name in target_names {
@@ -1963,7 +1974,11 @@ pub fn parse_makefile_into(
         // Target-specific variable assignment: target: VAR = VAL, target: VAR := VAL, target: VAR += VAL, target: VAR ?= VAL
         if let Some(cp) = colon_pos {
             let after_colon = effective_line[cp + 1..].trim();
-            if let Some(sub_eq) = find_top_level_char(after_colon, '=') {
+            // An `=` after the recipe's `;` (`t: ; echo a=b`) is recipe text.
+            let semi = find_top_level_char(after_colon, ';');
+            if let Some(sub_eq) =
+                find_top_level_char(after_colon, '=').filter(|&eq| semi.is_none_or(|sc| eq < sc))
+            {
                 let var_part_raw = after_colon[..sub_eq].trim();
                 let is_imm = var_part_raw.ends_with(':');
                 let is_app = var_part_raw.ends_with('+');
@@ -2096,6 +2111,10 @@ pub fn parse_makefile_into(
         if let Some(cp) = colon_pos {
             let target_part = effective_line[..cp].trim();
             let mut prereqs_part = effective_line[cp + 1..].trim();
+            if let Some(semi) = find_top_level_char(prereqs_part, ';') {
+                inline_recipe = Some((line_num, format!("\t{}", prereqs_part[semi + 1..].trim())));
+                prereqs_part = prereqs_part[..semi].trim();
+            }
 
             // `target:: prereqs` (double-colon). Approximation: the rules are
             // merged, so all their prerequisites come before their recipes,

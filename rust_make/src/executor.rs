@@ -754,6 +754,11 @@ impl<'a> Executor<'a> {
                                 &rule.prereqs,
                             );
                             let (cmd, s2, i2, f2) = recipe_prefixes(&expanded);
+                            // A line that expands to nothing is skipped, not
+                            // echoed or run (GNU make).
+                            if cmd.trim().is_empty() {
+                                continue;
+                            }
                             let cmd = cmd.to_string();
                             let force = f1 || f2 || mentions_make(raw_cmd);
                             let run = !self.config.dry_run || force;
@@ -1187,6 +1192,9 @@ impl<'a> Executor<'a> {
                                                     &rule.prereqs,
                                                 );
                                                 let (cmd, s2, i2, f2) = recipe_prefixes(&expanded);
+                                                if cmd.trim().is_empty() {
+                                                    continue;
+                                                }
                                                 let cmd = cmd.to_string();
                                                 let force = f1 || f2 || mentions_make(raw_cmd);
                                                 let run = !config.dry_run || force;
