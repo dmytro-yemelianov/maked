@@ -19,7 +19,7 @@ jobs:
     name: Verify & Test Gate (raps-ci)
     # GitHub-hosted minutes are billing-blocked account-wide; select the shared
     # box by its labels, never by bare `self-hosted` (other tenants' runners).
-    runs-on: [self-hosted, raps-ci, makeyd]
+    runs-on: [self-hosted, raps-ci, maked]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +60,7 @@ jobs:
             echo "::error::a headline theorem depends on sorryAx"; exit 1
           fi
 
-      - name: Differential fuzzer (makeyd vs GNU make vs Lean model)
+      - name: Differential fuzzer (maked vs GNU make vs Lean model)
         run: python3 benchmarks/fuzzer/fuzz_runner.py
 
       - name: Schedule fuzzer (real -jN schedules checked by the Lean model)

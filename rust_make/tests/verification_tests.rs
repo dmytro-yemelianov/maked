@@ -1,8 +1,8 @@
-use makeyd::ast::{Makefile, Rule};
-use makeyd::executor::{ExecutionConfig, Executor};
-use makeyd::freshness::{FreshnessDecision, RebuildReason, evaluate_freshness};
-use makeyd::graph::{DependencyGraph, GraphError};
-use makeyd::parser::{expand_variables, parse_makefile_content};
+use maked::ast::{Makefile, Rule};
+use maked::executor::{ExecutionConfig, Executor};
+use maked::freshness::{FreshnessDecision, RebuildReason, evaluate_freshness};
+use maked::graph::{DependencyGraph, GraphError};
+use maked::parser::{expand_variables, parse_makefile_content};
 use std::time::{Duration, SystemTime};
 
 #[test]
@@ -103,8 +103,14 @@ fn test_suffix_rule_conversion() {
 \t$(CC) -c $(CFLAGS) $< -o $@
 ";
     let mf = parse_makefile_content(content, &[]).expect("parse failed");
-    assert_eq!(mf.pattern_rules.len(), 2); // 1 built-in + 1 user-defined suffix rule
-    let user_rule = &mf.pattern_rules[1];
+    // Built-in rules have line_number 0; exactly one rule comes from the file.
+    let user_rules: Vec<_> = mf
+        .pattern_rules
+        .iter()
+        .filter(|r| r.line_number > 0)
+        .collect();
+    assert_eq!(user_rules.len(), 1);
+    let user_rule = user_rules[0];
     assert_eq!(user_rule.target_pattern, "%.o");
     assert_eq!(user_rule.prereq_patterns, vec!["%.c"]);
     assert_eq!(user_rule.commands, vec!["$(CC) -c $(CFLAGS) $< -o $@"]);
@@ -297,8 +303,8 @@ step2: step1
 
 #[test]
 fn test_cryptographic_hash_freshness() {
-    use makeyd::freshness::evaluate_freshness_hash;
-    use makeyd::hash::{BuildDatabase, TargetRecord};
+    use maked::freshness::evaluate_freshness_hash;
+    use maked::hash::{BuildDatabase, TargetRecord};
     use std::collections::HashMap;
 
     let mut db = BuildDatabase::default();
@@ -482,7 +488,7 @@ fn test_gnu_functions_wildcard() {
 #[test]
 fn test_vpath_file_resolution() {
     use std::fs;
-    let temp_dir = std::env::temp_dir().join("makeyd_vpath_test");
+    let temp_dir = std::env::temp_dir().join("maked_vpath_test");
     let src_dir = temp_dir.join("src");
     let _ = fs::create_dir_all(&src_dir);
     let c_file = src_dir.join("test_module.c");

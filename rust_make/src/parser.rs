@@ -72,37 +72,13 @@ fn expand_variables_internal(
                 continue;
             }
 
-            // Bare automatic variables: $@, $<, $^, $*
-            if next_ch == '@' {
-                if let Some(t) = target {
-                    result.push_str(t);
-                }
-                i += 2;
-                continue;
-            } else if next_ch == '<' {
-                if let Some(first_dep) = prereqs.first() {
-                    result.push_str(first_dep);
-                }
-                i += 2;
-                continue;
-            } else if next_ch == '^' {
-                let mut seen = HashSet::new();
-                let mut unique = Vec::new();
-                for dep in prereqs {
-                    if seen.insert(dep) {
-                        unique.push(dep.as_str());
-                    }
-                }
-                result.push_str(&unique.join(" "));
-                i += 2;
-                continue;
-            } else if next_ch == '*' {
-                if let Some(t) = target {
-                    let stem = match t.rfind('.') {
-                        Some(dot_idx) => &t[..dot_idx],
-                        None => t,
-                    };
-                    result.push_str(stem);
+            // Bare automatic variables: $@ $< $^ $+ $? $* $|
+            if matches!(next_ch, '@' | '<' | '^' | '+' | '?' | '*' | '|') {
+                let mut buf = [0u8; 4];
+                if let Some(v) =
+                    automatic_var(next_ch.encode_utf8(&mut buf), makefile, target, prereqs)
+                {
+                    result.push_str(&v);
                 }
                 i += 2;
                 continue;
@@ -203,29 +179,9 @@ fn eval_inner(
         }
     }
 
-    // Automatic variables
-    if trimmed == "@" {
-        return target.unwrap_or("").to_string();
-    } else if trimmed == "<" {
-        return prereqs.first().cloned().unwrap_or_default();
-    } else if trimmed == "^" {
-        let mut seen = HashSet::new();
-        let mut unique = Vec::new();
-        for dep in prereqs {
-            if seen.insert(dep) {
-                unique.push(dep.as_str());
-            }
-        }
-        return unique.join(" ");
-    } else if trimmed == "*" {
-        if let Some(t) = target {
-            let stem = match t.rfind('.') {
-                Some(dot_idx) => &t[..dot_idx],
-                None => t,
-            };
-            return stem.to_string();
-        }
-        return String::new();
+    // Automatic variables, including $(@D) / $(<F) forms
+    if let Some(v) = automatic_var(trimmed, makefile, target, prereqs) {
+        return v;
     }
 
     // Substitution reference: $(VAR:pattern=replacement)
@@ -235,29 +191,9 @@ fn eval_inner(
         } else {
             var_name.to_string()
         };
-        let var_val = if expanded_var_name == "@" {
-            target.unwrap_or("").to_string()
-        } else if expanded_var_name == "<" {
-            prereqs.first().cloned().unwrap_or_default()
-        } else if expanded_var_name == "^" {
-            let mut seen = HashSet::new();
-            let mut unique = Vec::new();
-            for dep in prereqs {
-                if seen.insert(dep) {
-                    unique.push(dep.as_str());
-                }
-            }
-            unique.join(" ")
-        } else if expanded_var_name == "*" {
-            if let Some(t) = target {
-                let stem = match t.rfind('.') {
-                    Some(dot_idx) => &t[..dot_idx],
-                    None => t,
-                };
-                stem.to_string()
-            } else {
-                String::new()
-            }
+        let var_val = if let Some(v) = automatic_var(&expanded_var_name, makefile, target, prereqs)
+        {
+            v
         } else if let Some(val) = scoped_vars.and_then(|sv| sv.get(&expanded_var_name)) {
             expand_variables_internal(val, makefile, target, prereqs, scoped_vars, depth)
         } else if let Some(val) =
@@ -310,6 +246,15 @@ fn eval_inner(
         "eval",
         "foreach",
         "value",
+        "findstring",
+        "wordlist",
+        "abspath",
+        "realpath",
+        "origin",
+        "flavor",
+        "file",
+        "intcmp",
+        "let",
     ];
 
     for &func in &known_functions {
@@ -362,7 +307,170 @@ fn eval_function(
     scoped_vars: Option<&HashMap<String, String>>,
     depth: &mut usize,
 ) -> String {
+    let mut ex =
+        |text: &str| expand_variables_internal(text, makefile, target, prereqs, scoped_vars, depth);
     match func {
+        "findstring" => {
+            let args = split_top_level_args(args_raw);
+            if args.len() < 2 {
+                return String::new();
+            }
+            let find = ex(&args[0]);
+            let within = ex(&args[1..].join(","));
+            if within.contains(find.as_str()) {
+                find
+            } else {
+                String::new()
+            }
+        }
+        "wordlist" => {
+            let args = split_top_level_args(args_raw);
+            if args.len() < 3 {
+                return String::new();
+            }
+            let s: usize = ex(args[0].trim()).trim().parse().unwrap_or(0);
+            let e: usize = ex(args[1].trim()).trim().parse().unwrap_or(0);
+            let text = ex(&args[2..].join(","));
+            if s == 0 || e < s {
+                return String::new();
+            }
+            text.split_whitespace()
+                .skip(s - 1)
+                .take(e - s + 1)
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+        "abspath" | "realpath" => {
+            let names = ex(args_raw);
+            let cwd = std::env::current_dir().unwrap_or_default();
+            names
+                .split_whitespace()
+                .filter_map(|n| {
+                    if func == "realpath" {
+                        fs::canonicalize(n)
+                            .ok()
+                            .map(|p| p.to_string_lossy().to_string())
+                    } else {
+                        Some(lexical_abspath(&cwd, n))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+        "origin" => {
+            let name = ex(args_raw);
+            let name = name.trim();
+            if automatic_var(name, makefile, None, &[]).is_some() && name.len() <= 2 {
+                "automatic".to_string()
+            } else if makefile.cli_overrides.contains(name) {
+                "command line".to_string()
+            } else if makefile.defaults.contains(name) {
+                if std::env::var_os(name).is_some() {
+                    "environment".to_string()
+                } else {
+                    "default".to_string()
+                }
+            } else if makefile.variables.contains_key(name) {
+                "file".to_string()
+            } else if std::env::var_os(name).is_some() {
+                "environment".to_string()
+            } else {
+                "undefined".to_string()
+            }
+        }
+        "flavor" => {
+            // maked stores `=` values raw and `:=` values expanded but does
+            // not record which; a value with `$` is reported as recursive.
+            let name = ex(args_raw);
+            let name = name.trim();
+            match makefile.get_var(name) {
+                None => "undefined".to_string(),
+                Some(v) if v.contains('$') => "recursive".to_string(),
+                Some(_) => "simple".to_string(),
+            }
+        }
+        "file" => {
+            let args = split_top_level_args(args_raw);
+            let spec = ex(args.first().copied().unwrap_or("")).trim().to_string();
+            let text = if args.len() > 1 {
+                Some(ex(&args[1..].join(",")))
+            } else {
+                None
+            };
+            if let Some(path) = spec.strip_prefix(">>") {
+                if let Ok(mut f) = fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path.trim())
+                {
+                    use std::io::Write;
+                    if let Some(t) = text {
+                        let _ = writeln!(f, "{t}");
+                    }
+                }
+                String::new()
+            } else if let Some(path) = spec.strip_prefix('>') {
+                let body = text.map(|t| format!("{t}\n")).unwrap_or_default();
+                let _ = fs::write(path.trim(), body);
+                String::new()
+            } else if let Some(path) = spec.strip_prefix('<') {
+                let mut c = fs::read_to_string(path.trim()).unwrap_or_default();
+                if c.ends_with('\n') {
+                    c.pop();
+                }
+                c
+            } else {
+                String::new()
+            }
+        }
+        "intcmp" => {
+            let args = split_top_level_args(args_raw);
+            if args.len() < 2 {
+                return String::new();
+            }
+            let l: i128 = ex(args[0].trim()).trim().parse().unwrap_or(0);
+            let r: i128 = ex(args[1].trim()).trim().parse().unwrap_or(0);
+            let pick = |i: usize| args.get(i).map(|a| a.to_string());
+            let branch = match l.cmp(&r) {
+                std::cmp::Ordering::Less => pick(2),
+                std::cmp::Ordering::Equal => pick(3).or_else(|| {
+                    if args.len() == 2 {
+                        None
+                    } else {
+                        Some(String::new())
+                    }
+                }),
+                std::cmp::Ordering::Greater => pick(4).or_else(|| pick(3)),
+            };
+            match branch {
+                Some(b) => ex(&b),
+                None if l == r => l.to_string(),
+                None => String::new(),
+            }
+        }
+        "let" => {
+            let args = split_top_level_args(args_raw);
+            if args.len() < 3 {
+                return String::new();
+            }
+            let names: Vec<String> = ex(&args[0])
+                .split_whitespace()
+                .map(str::to_string)
+                .collect();
+            let words_s = ex(&args[1]);
+            let words: Vec<&str> = words_s.split_whitespace().collect();
+            let mut scope = scoped_vars.cloned().unwrap_or_default();
+            for (i, n) in names.iter().enumerate() {
+                let v = if i + 1 == names.len() {
+                    words.get(i..).map(|w| w.join(" ")).unwrap_or_default()
+                } else {
+                    words.get(i).map(|w| w.to_string()).unwrap_or_default()
+                };
+                scope.insert(n.clone(), v);
+            }
+            let body = args[2..].join(",");
+            expand_variables_internal(&body, makefile, target, prereqs, Some(&scope), depth)
+        }
         "call" => {
             let args = split_top_level_args(args_raw);
             if args.is_empty() {
@@ -416,7 +524,13 @@ fn eval_function(
         "eval" => {
             let exp =
                 expand_variables_internal(args_raw, makefile, target, prereqs, scoped_vars, depth);
-            makefile.push_eval(exp);
+            if crate::ast::in_execution_phase() {
+                // During the build: apply simple assignments now (see
+                // `set_runtime_var`); anything else cannot change the graph.
+                eval_assignment_at_runtime(&exp, makefile);
+            } else {
+                makefile.push_eval(exp);
+            }
             String::new()
         }
         "foreach" => {
@@ -985,6 +1099,163 @@ fn patsubst(pattern: &str, replacement: &str, text: &str) -> String {
     words.join(" ")
 }
 
+/// GNU make automatic variables: `@ < ^ + ? * |` and their `D`/`F` forms
+/// (`$(@D)`, `$(^F)`, ...). `$?` compares mtimes at expansion time, which is
+/// when recipes are expanded: after prerequisites were brought up to date.
+fn automatic_var(
+    name: &str,
+    makefile: &Makefile,
+    target: Option<&str>,
+    prereqs: &[String],
+) -> Option<String> {
+    let (base, part) = match name.len() {
+        1 => (name, None),
+        2 if name.ends_with('D') || name.ends_with('F') => (&name[..1], name.chars().nth(1)),
+        _ => return None,
+    };
+    let order_only: &[String] = target
+        .and_then(|t| makefile.order_only.get(t))
+        .map_or(&[], Vec::as_slice);
+    let normal: Vec<String> = prereqs
+        .iter()
+        .filter(|d| !order_only.contains(d))
+        .cloned()
+        .collect();
+    let unique = || {
+        let mut seen = HashSet::new();
+        normal
+            .iter()
+            .filter(|d| seen.insert(d.as_str()))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let words: Vec<String> = match base {
+        "@" => target.map(|t| vec![t.to_string()]).unwrap_or_default(),
+        "<" => normal.first().cloned().into_iter().collect(),
+        "^" => unique(),
+        "+" => normal.clone(),
+        "?" => {
+            let tm = target.and_then(|t| fs::metadata(t).and_then(|m| m.modified()).ok());
+            unique()
+                .into_iter()
+                .filter(|d| match (tm, fs::metadata(d).and_then(|m| m.modified())) {
+                    (Some(t), Ok(dm)) => dm > t,
+                    (None, _) => true,
+                    (Some(_), Err(_)) => true,
+                })
+                .collect()
+        }
+        "*" => target
+            .map(|t| match makefile.static_stems.get(t) {
+                Some(stem) => vec![stem.clone()],
+                None => vec![t.rfind('.').map_or(t, |i| &t[..i]).to_string()],
+            })
+            .unwrap_or_default(),
+        "|" => order_only.to_vec(),
+        _ => return None,
+    };
+    let mapped: Vec<String> = match part {
+        None => words,
+        Some('D') => words
+            .iter()
+            .map(|w| match w.rfind('/') {
+                Some(0) => "/".to_string(),
+                Some(i) => w[..i].to_string(),
+                None => ".".to_string(),
+            })
+            .collect(),
+        Some(_) => words
+            .iter()
+            .map(|w| w.rsplit('/').next().unwrap_or(w).to_string())
+            .collect(),
+    };
+    Some(mapped.join(" "))
+}
+
+/// `NAME := v`, `NAME ::= v`, `NAME = v`, `NAME += v`, `NAME ?= v` from an
+/// `$(eval)` run during the build, applied to the runtime overlay.
+fn eval_assignment_at_runtime(text: &str, makefile: &Makefile) {
+    for line in text.lines() {
+        let line = line.trim();
+        let Some(eq) = find_top_level_char(line, '=') else {
+            continue;
+        };
+        let lhs = &line[..eq];
+        let value = line[eq + 1..].trim();
+        let (name, op) = if let Some(n) = lhs.strip_suffix("::") {
+            (n, ':')
+        } else if let Some(n) = lhs.strip_suffix(':') {
+            (n, ':')
+        } else if let Some(n) = lhs.strip_suffix('+') {
+            (n, '+')
+        } else if let Some(n) = lhs.strip_suffix('?') {
+            (n, '?')
+        } else {
+            (lhs, '=')
+        };
+        let name = name.trim();
+        if name.is_empty() || name.contains(char::is_whitespace) {
+            continue;
+        }
+        let val = match op {
+            ':' => expand_variables(value, makefile, None, &[]),
+            '+' => {
+                let prev = makefile.get_var(name).unwrap_or_default();
+                if prev.is_empty() {
+                    value.to_string()
+                } else {
+                    format!("{prev} {value}")
+                }
+            }
+            '?' if makefile.get_var(name).is_some() => continue,
+            _ => value.to_string(),
+        };
+        crate::ast::set_runtime_var(name.to_string(), val);
+    }
+}
+
+/// `$(abspath)`: make `name` absolute and fold `.`/`..` without touching
+/// the filesystem (no symlink resolution, unlike `$(realpath)`).
+fn lexical_abspath(cwd: &Path, name: &str) -> String {
+    let joined = if Path::new(name).is_absolute() {
+        Path::new(name).to_path_buf()
+    } else {
+        cwd.join(name)
+    };
+    let mut parts: Vec<String> = Vec::new();
+    for c in joined.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                parts.pop();
+            }
+            std::path::Component::Normal(p) => parts.push(p.to_string_lossy().to_string()),
+            _ => {}
+        }
+    }
+    format!("/{}", parts.join("/"))
+}
+
+/// Drop a make comment: everything from the first `#` not written as `\#`.
+/// `\#` becomes a literal `#`.
+fn strip_comment(line: &str) -> std::borrow::Cow<'_, str> {
+    if !line.contains('#') {
+        return std::borrow::Cow::Borrowed(line);
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'#') => {
+                out.push('#');
+                chars.next();
+            }
+            '#' => break,
+            _ => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 fn filter_words(patterns: &str, text: &str, include: bool) -> String {
     let pats: Vec<&str> = patterns.split_whitespace().collect();
     let mut result = Vec::new();
@@ -1284,6 +1555,10 @@ pub fn parse_makefile_into(
     }
     let mut phony_targets: HashSet<String> = HashSet::new();
     let mut current_target: Option<TargetType> = None;
+    // Prerequisites written on the rule line now being read, per target:
+    // when its recipe starts they move to the front, because GNU make takes
+    // `$<` and the start of `$^` from the rule that has the recipe.
+    let mut line_prereqs: HashMap<String, Vec<String>> = HashMap::new();
 
     // First pass: join line continuations (lines ending with backslash \)
     let raw_lines: Vec<&str> = content.lines().collect();
@@ -1311,10 +1586,22 @@ pub fn parse_makefile_into(
         let (line_num, ref line) = combined_lines[line_idx];
         line_idx += 1;
 
-        let trimmed = line.trim();
+        // In a rule, a tab-led line is recipe text and keeps its '#'. Every
+        // other line loses its comment first, as in GNU make (`\#` is a
+        // literal '#'), so directives like `include x # c` and `endif # c` work.
+        let is_recipe_line = line.starts_with('\t') && current_target.is_some();
+        let uncommented;
+        let trimmed: &str = if is_recipe_line {
+            line.trim()
+        } else {
+            uncommented = strip_comment(line);
+            uncommented.trim()
+        };
 
         // Check conditional directives: ifeq, ifneq, ifdef, ifndef, else, endif
-        if trimmed.starts_with("ifeq")
+        if is_recipe_line {
+            // recipe text: no directive processing
+        } else if trimmed.starts_with("ifeq")
             || trimmed.starts_with("ifneq")
             || trimmed.starts_with("ifdef")
             || trimmed.starts_with("ifndef")
@@ -1403,8 +1690,10 @@ pub fn parse_makefile_into(
             continue;
         }
 
-        // Recipe line (starts with tab)
-        if line.starts_with('\t') {
+        // Recipe line: tab-led *inside a rule*. Outside one, GNU make parses a
+        // tab-indented line as ordinary makefile text (redis indents
+        // assignments and conditionals that way).
+        if line.starts_with('\t') && current_target.is_some() {
             let cmd = line[1..].trim();
             if cmd.is_empty() {
                 continue;
@@ -1413,6 +1702,23 @@ pub fn parse_makefile_into(
                 Some(TargetType::Normal(ref target_names)) => {
                     for target_name in target_names {
                         if let Some(rule) = makefile.rules.get_mut(target_name) {
+                            if rule.commands.is_empty() {
+                                if let Some(first) = line_prereqs.get(target_name) {
+                                    let rest: Vec<String> = rule
+                                        .prereqs
+                                        .iter()
+                                        .filter(|p| !first.contains(p))
+                                        .cloned()
+                                        .collect();
+                                    let mut ordered: Vec<String> = first
+                                        .iter()
+                                        .filter(|p| rule.prereqs.contains(p))
+                                        .cloned()
+                                        .collect();
+                                    ordered.extend(rest);
+                                    rule.prereqs = ordered;
+                                }
+                            }
                             rule.commands.push(cmd.to_string());
                         }
                     }
@@ -1430,32 +1736,6 @@ pub fn parse_makefile_into(
                 }
             }
             continue;
-        }
-
-        // Space-indented recipe line inside a target rule
-        if (line.starts_with("    ") || line.starts_with("  ")) && current_target.is_some() {
-            let cmd = line.trim();
-            if !cmd.is_empty() && !cmd.starts_with('#') {
-                match current_target {
-                    Some(TargetType::Normal(ref target_names)) => {
-                        for target_name in target_names {
-                            eprintln!(
-                                "make: [WARNING] Makefile:{line_num}: line indented with spaces instead of a tab for target '{target_name}'. Converting to recipe command.",
-                            );
-                            if let Some(rule) = makefile.rules.get_mut(target_name) {
-                                rule.commands.push(cmd.to_string());
-                            }
-                        }
-                    }
-                    Some(TargetType::Pattern(idx)) => {
-                        if let Some(p_rule) = makefile.pattern_rules.get_mut(idx) {
-                            p_rule.commands.push(cmd.to_string());
-                        }
-                    }
-                    None => {}
-                }
-                continue;
-            }
         }
 
         if trimmed.starts_with('#') {
@@ -1498,6 +1778,7 @@ pub fn parse_makefile_into(
                         .resolve_path(inc_file)
                         .unwrap_or_else(|| inc_file.to_string());
                     if Path::new(&resolved_inc).exists() {
+                        makefile.included.push(inc_file.to_string());
                         match fs::read_to_string(&resolved_inc) {
                             Ok(sub_content) => {
                                 parse_makefile_into(makefile, &sub_content, cli_vars)?;
@@ -1511,9 +1792,13 @@ pub fn parse_makefile_into(
                                 }
                             }
                         }
-                    } else if !is_optional {
-                        return Err(ParseError::SyntaxError(
-                            format!("include file not found: '{inc_file}'"),
+                    } else {
+                        // It may still be made by a rule: `main` tries to
+                        // remake included makefiles and restarts (GNU make's
+                        // "How Makefiles Are Remade").
+                        makefile.missing_includes.push((
+                            inc_file.to_string(),
+                            is_optional,
                             line_num,
                         ));
                     }
@@ -1523,12 +1808,48 @@ pub fn parse_makefile_into(
             continue;
         }
 
-        // Strip inline comments for non-recipe lines
-        let effective_line = if let Some(hash_pos) = trimmed.find('#') {
-            trimmed[..hash_pos].trim()
-        } else {
-            trimmed
-        };
+        // Comments were stripped above.
+        let mut effective_line = trimmed;
+
+        // export / unexport / override prefixes and directives.
+        let mut export_this = false;
+        let mut force_override = false;
+        if effective_line == "export" {
+            makefile.export_all = true;
+            current_target = None;
+            continue;
+        }
+        if effective_line == "unexport" {
+            makefile.export_all = false;
+            current_target = None;
+            continue;
+        }
+        if let Some(rest) = effective_line.strip_prefix("override ") {
+            force_override = true;
+            effective_line = rest.trim_start();
+        }
+        if let Some(rest) = effective_line.strip_prefix("unexport ") {
+            if find_top_level_char(rest, ':').is_none() {
+                for name in expand_variables(rest, makefile, None, &[]).split_whitespace() {
+                    makefile.exported.insert(name.to_string(), false);
+                }
+                current_target = None;
+                continue;
+            }
+        }
+        if let Some(rest) = effective_line.strip_prefix("export ") {
+            let rest = rest.trim_start();
+            if find_top_level_char(rest, '=').is_some() {
+                export_this = true;
+                effective_line = rest;
+            } else if find_top_level_char(rest, ':').is_none() {
+                for name in expand_variables(rest, makefile, None, &[]).split_whitespace() {
+                    makefile.exported.insert(name.to_string(), true);
+                }
+                current_target = None;
+                continue;
+            }
+        }
 
         if effective_line.is_empty() {
             continue;
@@ -1639,8 +1960,19 @@ pub fn parse_makefile_into(
                     ep
                 };
 
-                let key = effective_line[..key_end].trim().to_string();
+                // Variable names are expanded: `$(N)_FLAGS = x`.
+                let key_raw = effective_line[..key_end].trim();
+                let key = if key_raw.contains('$') {
+                    expand_variables(key_raw, makefile, None, &[])
+                        .trim()
+                        .to_string()
+                } else {
+                    key_raw.to_string()
+                };
                 let raw_val = effective_line[ep + 1..].trim();
+                if export_this {
+                    makefile.exported.insert(key.clone(), true);
+                }
 
                 if is_cond && makefile.get_var(&key).is_some() {
                     current_target = None;
@@ -1660,7 +1992,11 @@ pub fn parse_makefile_into(
                     raw_val.to_string()
                 };
 
-                makefile.set_var(key, val);
+                if force_override {
+                    makefile.set_var_override(key, val);
+                } else {
+                    makefile.set_var(key, val);
+                }
                 current_target = None;
                 process_pending_evals(makefile, cli_vars)?;
                 continue;
@@ -1670,7 +2006,78 @@ pub fn parse_makefile_into(
         // Target rule line: target: prereqs or %.o: %.c or .c.o:
         if let Some(cp) = colon_pos {
             let target_part = effective_line[..cp].trim();
-            let prereqs_part = effective_line[cp + 1..].trim();
+            let mut prereqs_part = effective_line[cp + 1..].trim();
+
+            // `target:: prereqs` (double-colon). Approximation: the rules are
+            // merged, so all their prerequisites come before their recipes,
+            // which then run in order. GNU make runs them as separate rules.
+            let is_double_colon = prereqs_part.starts_with(':');
+            if is_double_colon {
+                prereqs_part = prereqs_part[1..].trim();
+            }
+
+            // `a b: | dir` order-only prerequisites. A missing one is built
+            // first like a normal prerequisite; an existing one is ignored,
+            // so it never makes the target out of date.
+            let order_only_owned;
+            let mut order_only_names: Vec<String> = Vec::new();
+            if let Some(bar) = find_top_level_char(prereqs_part, '|') {
+                let normal = &prereqs_part[..bar];
+                let order_only = expand_variables(&prereqs_part[bar + 1..], makefile, None, &[]);
+                order_only_names = order_only.split_whitespace().map(str::to_string).collect();
+                let missing: Vec<&str> = order_only
+                    .split_whitespace()
+                    .filter(|p| !Path::new(p).exists())
+                    .collect();
+                order_only_owned = format!("{} {}", normal, missing.join(" "));
+                prereqs_part = order_only_owned.trim();
+            }
+
+            // Static pattern rule: `targets: target-pattern: prereq-patterns`.
+            if !is_double_colon {
+                if let Some(c2) = find_top_level_char(prereqs_part, ':') {
+                    let targets = expand_variables(target_part, makefile, None, &[]);
+                    let tpat = expand_variables(prereqs_part[..c2].trim(), makefile, None, &[]);
+                    let ppats =
+                        expand_variables(prereqs_part[c2 + 1..].trim(), makefile, None, &[]);
+                    let tpat = tpat.trim();
+                    let mut targets_vec = Vec::new();
+                    line_prereqs.clear();
+                    for tgt in targets.split_whitespace() {
+                        let Some(stem) = crate::ast::match_pattern(tpat, tgt) else {
+                            eprintln!(
+                                "make: Makefile:{line_num}: target '{tgt}' doesn't match the target pattern"
+                            );
+                            continue;
+                        };
+                        let prereqs: Vec<String> = ppats
+                            .split_whitespace()
+                            .map(|p| p.replacen('%', &stem, 1))
+                            .collect();
+                        line_prereqs.insert(tgt.to_string(), prereqs.clone());
+                        let rule = Rule {
+                            target: tgt.to_string(),
+                            prereqs,
+                            commands: Vec::new(),
+                            is_phony: phony_targets.contains(tgt),
+                            line_number: line_num,
+                        };
+                        makefile.add_rule(rule);
+                        makefile.static_stems.insert(tgt.to_string(), stem);
+                        if !order_only_names.is_empty() {
+                            makefile
+                                .order_only
+                                .entry(tgt.to_string())
+                                .or_default()
+                                .extend(order_only_names.iter().cloned());
+                        }
+                        targets_vec.push(tgt.to_string());
+                    }
+                    current_target = Some(TargetType::Normal(targets_vec));
+                    process_pending_evals(makefile, cli_vars)?;
+                    continue;
+                }
+            }
 
             let expanded_targets_str = expand_variables(target_part, makefile, None, &[]);
             let expanded_prereqs_str = expand_variables(prereqs_part, makefile, None, &[]);
@@ -1694,9 +2101,19 @@ pub fn parse_makefile_into(
                 continue;
             }
 
+            // Glob patterns in prerequisites expand like GNU make's: sorted
+            // matches, or the word itself when nothing matches.
             let prereqs: Vec<String> = expanded_prereqs_str
                 .split_whitespace()
-                .map(|s| s.to_string())
+                .flat_map(|s| {
+                    if !s.contains('%') && (s.contains('*') || s.contains('?') || s.contains('[')) {
+                        let mut m = expand_wildcard(s);
+                        m.sort();
+                        if m.is_empty() { vec![s.to_string()] } else { m }
+                    } else {
+                        vec![s.to_string()]
+                    }
+                })
                 .collect();
 
             // Classic suffix rule: e.g. .c.o:
@@ -1746,14 +2163,23 @@ pub fn parse_makefile_into(
 
             let target_tokens: Vec<&str> = expanded_targets_str.split_whitespace().collect();
             if target_tokens.is_empty() {
-                return Err(ParseError::SyntaxError(
-                    "missing target before colon".into(),
-                    line_num,
-                ));
+                if target_part.is_empty() {
+                    return Err(ParseError::SyntaxError(
+                        "missing target before colon".into(),
+                        line_num,
+                    ));
+                }
+                // Targets that expand to nothing (`$(EMPTY): x`): GNU make
+                // drops the rule and its recipe.
+                current_target = Some(TargetType::Normal(Vec::new()));
+                process_pending_evals(makefile, cli_vars)?;
+                continue;
             }
 
             let mut targets_vec = Vec::new();
+            line_prereqs.clear();
             for &tgt in &target_tokens {
+                line_prereqs.insert(tgt.to_string(), prereqs.clone());
                 let is_phony = phony_targets.contains(tgt);
                 let rule = Rule {
                     target: tgt.to_string(),
@@ -1763,6 +2189,13 @@ pub fn parse_makefile_into(
                     line_number: line_num,
                 };
                 makefile.add_rule(rule);
+                if !order_only_names.is_empty() {
+                    makefile
+                        .order_only
+                        .entry(tgt.to_string())
+                        .or_default()
+                        .extend(order_only_names.iter().cloned());
+                }
                 targets_vec.push(tgt.to_string());
             }
 
@@ -1796,6 +2229,18 @@ pub fn parse_makefile_into(
     for phony in &phony_targets {
         if let Some(rule) = makefile.rules.get_mut(phony) {
             rule.is_phony = true;
+        } else {
+            // `.PHONY: FORCE` with no rule: always out of date, no recipe.
+            makefile.rules.insert(
+                phony.clone(),
+                Rule {
+                    target: phony.clone(),
+                    prereqs: Vec::new(),
+                    commands: Vec::new(),
+                    is_phony: true,
+                    line_number: 0,
+                },
+            );
         }
     }
 

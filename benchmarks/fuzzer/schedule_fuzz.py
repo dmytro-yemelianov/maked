@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Schedule fuzzer: checks makeyd's real -jN schedules against the Lean model.
+Schedule fuzzer: checks maked's real -jN schedules against the Lean model.
 
 For random DAGs whose recipes sleep for known times, it runs
-`makeyd -jM --trace` and gives the recorded schedule (start, duration and
+`maked -jM --trace` and gives the recorded schedule (start, duration and
 prerequisites of every job) to `lean_make --schedule`. That command uses the
 definitions in lean_make/LeanMake/Scheduling.lean. Every schedule must be:
 
@@ -25,7 +25,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MAKEYD = ROOT / "rust_make/target/release/makeyd"
+MAKED = ROOT / "rust_make/target/release/maked"
 LEAN = ROOT / "lean_make/.lake/build/bin/lean_make"
 
 # Dispatch allowance per job, in microseconds: the time between a job's
@@ -78,14 +78,14 @@ def generate(rng, workdir):
 def run_one(seed):
     rng = random.Random(seed)
     slots = rng.choice([2, 3, 4])
-    with tempfile.TemporaryDirectory(prefix="makeyd_sched_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="maked_sched_") as tmp:
         work = Path(tmp)
         preds = generate(rng, work)
         trace = work / "trace.json"
-        r = subprocess.run([str(MAKEYD), "-C", str(work), f"-j{slots}", f"--trace={trace}", "all"],
+        r = subprocess.run([str(MAKED), "-C", str(work), f"-j{slots}", f"--trace={trace}", "all"],
                            capture_output=True, text=True)
         if r.returncode != 0:
-            return f"makeyd failed: {r.stderr.strip()}"
+            return f"maked failed: {r.stderr.strip()}"
         events = [e for e in json.loads(trace.read_text())["traceEvents"]
                   if e.get("ph") == "X" and e.get("cat") == "rule" and e["name"] in preds]
         if len(events) != len(preds):

@@ -179,7 +179,7 @@ theorem cache_soundness_deterministic
 
 ## 3. Real-World Lua 5.4.9 Benchmark
 
-The rewritten `makeyd` was validated on **Lua 5.4.9**, compiling `liblua.a`, `lua`, and `luac` from source on Apple Silicon (arm64).
+The rewritten `maked` was validated on **Lua 5.4.9**, compiling `liblua.a`, `lua`, and `luac` from source on Apple Silicon (arm64).
 
 ### 3.1 Full Parallel Build (-j 8 macosx)
 - Binary output verification:
@@ -188,7 +188,7 @@ The rewritten `makeyd` was validated on **Lua 5.4.9**, compiling `liblua.a`, `lu
   - Mach-O 64-bit executable arm64 byte parity.
 
 ### 3.2 Up-to-Date / Idempotency Benchmark (Hyperfine, 30 runs)
-> **Correction (2026-10-05):** the numbers in this section came from a flawed harness. Ninja was timed without its own `.ninja_log`, and make was given no goal, so in the modular graphs it built only the first rule. For re-measured results and the fixed harness (`benchmarks/scalability/fair_bench.sh`), see [docs/inside-makeyd.md §4](docs/inside-makeyd.md#4-benchmarks). Against Ninja, makeyd is slower on every null build, not 15× faster.
+> **Correction (2026-10-05):** the numbers in this section came from a flawed harness. Ninja was timed without its own `.ninja_log`, and make was given no goal, so in the modular graphs it built only the first rule. For re-measured results and the fixed harness (`benchmarks/scalability/fair_bench.sh`), see [docs/inside-maked.md §4](docs/inside-maked.md#4-benchmarks). Against Ninja, maked is slower on every null build, not 15× faster.
 
 Comparing up-to-date traversal across three implementations on Lua 5.4.9:
 
@@ -201,12 +201,12 @@ Benchmark 2: /usr/bin/make macosx (macOS Make 3.81)
   Time (mean ± σ):      20.2 ms ±   6.7 ms    [User: 7.0 ms, System: 10.9 ms]
   Range (min … max):    16.6 ms …  49.7 ms    30 runs
 
-Benchmark 3: rust_make macosx (makeyd)
+Benchmark 3: rust_make macosx (maked)
   Time (mean ± σ):      10.4 ms ±   0.8 ms    [User: 4.1 ms, System: 4.3 ms]
   Range (min … max):     9.6 ms …  13.6 ms    30 runs
 
 Summary:
-  makeyd ran:
+  maked ran:
     1.10 ± 0.13 times faster than GNU Make 4.4.1
     1.94 ± 0.61 times faster than macOS Make 3.81
 ```
@@ -235,7 +235,7 @@ running 1 test (Clang Compilation Database Suite)
 test test_emit_compdb_cli ... ok
 
 running 2 tests (JobServer Multi-Process Integration Suite)
-test test_makeyd_under_gnu_make_jobserver ... ok
+test test_maked_under_gnu_make_jobserver ... ok
 test test_recursive_submake_jobserver_coordination ... ok
 
 running 2 tests (Depfile & C Dynamic Header Scanning Suite)
@@ -304,7 +304,7 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 ### Track 1: Cryptographic Content Hashing (`--hash`)
 - **Engine**: Pure zero-dependency, FIPS 180-4 compliant SHA-256 implementation in [rust_make/src/hash.rs](rust_make/src/hash.rs).
-- **Persistent Database**: `.makeyd.db` key-value records tracking target hash, recipe hash, and prerequisite hashes.
+- **Persistent Database**: `.maked.db` key-value records tracking target hash, recipe hash, and prerequisite hashes.
 - **Tamper Detection**: Detects target disappearance, external target tampering, prerequisite content modifications, and recipe command changes.
 
 ### Track 2: GNU Make Core Functions & VPATH Resolution
@@ -321,12 +321,12 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 ### Track 5: IEEE Std 1003.1 POSIX Test Harness & Unix Man Page
 - **Harness**: [rust_make/tests/posix_tests.rs](rust_make/tests/posix_tests.rs) testing all POSIX flags (`-b`, `-B`, `-C`, `-e`, `-f`, `-i`, `-j`, `-n`, `-p`, `-q`, `-s`, `-t`, `-v`), command prefixes (`@`, `-`), and macro overrides.
-- **Manual Page**: [doc/makeyd.1](doc/makeyd.1) written in standard Unix troff / mandoc format, fully renderable via `man ./doc/makeyd.1`.
+- **Manual Page**: [doc/maked.1](doc/maked.1) written in standard Unix troff / mandoc format, fully renderable via `man ./doc/maked.1`.
 
 ### Track 6: GNU Make Jobserver Protocol (`--jobserver-auth` / `--jobserver-fds`)
 - **Architecture**: Zero-dependency implementation in [rust_make/src/jobserver.rs](rust_make/src/jobserver.rs) supporting both modern named pipe / FIFO format (`--jobserver-auth=fifo:PATH`) and classic anonymous pipe file descriptors (`--jobserver-auth=R,W`).
 - **Child Propagation**: Automatically appends jobserver credentials to `MAKEFLAGS` across all executed recipes.
-- **Interoperability**: Verified two-way interoperability where `makeyd` can act as either the jobserver master or client, cooperatively sharing tokens with standard GNU Make 4.4 without oversubscribing host CPU cores or deadlocking.
+- **Interoperability**: Verified two-way interoperability where `maked` can act as either the jobserver master or client, cooperatively sharing tokens with standard GNU Make 4.4 without oversubscribing host CPU cores or deadlocking.
 
 ### Track 7: Auto-Generated C/C++ Depfile Scanning & Dynamic DAG Expansion
 - **Compiler Depfiles**: Direct ingestion of GCC/Clang generated `.d` depfiles (`-MD -MP -MF`) via `include` and `-include`.
@@ -335,9 +335,9 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 ### Track 8: Packaging, Distribution Bundle & Shell Completions
 - **Shell Completions**:
-  - [completions/makeyd.bash](completions/makeyd.bash): Bash programmable completion with flag parsing and dynamic makefile target discovery.
-  - [completions/makeyd.zsh](completions/makeyd.zsh): Zsh completion script with detailed flag documentation and goal selection.
-  - [completions/makeyd.fish](completions/makeyd.fish): Fish completions with commandline parsing.
+  - [completions/maked.bash](completions/maked.bash): Bash programmable completion with flag parsing and dynamic makefile target discovery.
+  - [completions/maked.zsh](completions/maked.zsh): Zsh completion script with detailed flag documentation and goal selection.
+  - [completions/maked.fish](completions/maked.fish): Fish completions with commandline parsing.
 - **Packaging Pipeline**: Top-level [Makefile](Makefile) supporting standard `all`, `test`, `install`, `uninstall`, and `clean` with `DESTDIR` and `PREFIX` support.
 
 ### Track 9: Chrome Trace & Perfetto Timeline Profiler & Critical Path DAG Analyzer (`--trace`, `--profile`)
@@ -362,12 +362,12 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 - **Separator Robustness**: `find_top_level_char` algorithm respecting nested parentheses `()` and braces `{}` to eliminate false splits on colons or equals signs inside macro expressions.
 - **Verified**: Covered by [rust_make/tests/metaprogramming_tests.rs](rust_make/tests/metaprogramming_tests.rs).
 
-### Track 11: 3-Way Differential Oracle Suite (`makeyd` $\leftrightarrow$ `gmake` $\leftrightarrow$ `lean_make`)
+### Track 11: 3-Way Differential Oracle Suite (`maked` $\leftrightarrow$ `gmake` $\leftrightarrow$ `lean_make`)
 - **Executable Formal Oracle**: Added `--eval <spec_file>` CLI mode to `lean_make` ([lean_make/Main.lean](lean_make/Main.lean)) for zero-overhead evaluation of arbitrary DAG topologies against certified Lean 4 formal semantics.
 - **Automated Fuzzer Engine**: [benchmarks/fuzzer/fuzz_runner.py](benchmarks/fuzzer/fuzz_runner.py) running 50 randomized DAG topologies through 4 distinct phases:
   1. *Cold Build*: Complete initial target compilation from leaf sources.
   2. *Idempotency*: Re-running without modifications; asserts 0 targets rebuilt.
-  3. *Incremental Tampering*: Modifying leaf nodes; verifies exact subset of rebuilt downstream targets matches between GNU Make, `makeyd`, and Lean 4.
+  3. *Incremental Tampering*: Modifying leaf nodes; verifies exact subset of rebuilt downstream targets matches between GNU Make, `maked`, and Lean 4.
   4. *Question Mode (`-q`)*: Confirms POSIX exit code alignment (0 when up-to-date, 1 when outdated).
 - **Parity Result**: **50/50 iterations passed (100.0% 3-way parity)** across all 3 engines in 7.70 seconds. Verified in [benchmarks/fuzzer/oracle_3way_report.json](benchmarks/fuzzer/oracle_3way_report.json).
 
@@ -375,7 +375,7 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 - **Multi-Target Release Matrix**: Pure zero-dependency compilation across 6 deployment targets:
   1. **macOS Apple Silicon**: `aarch64-apple-darwin` (Mach-O 64-bit arm64)
   2. **macOS Intel**: `x86_64-apple-darwin` (Mach-O 64-bit x86-64)
-  3. **macOS Universal 2**: `makeyd-macos-universal` combined via `lipo`
+  3. **macOS Universal 2**: `maked-macos-universal` combined via `lipo`
   4. **Linux x86_64 Static Musl**: `x86_64-unknown-linux-musl` static-pie binary linked via `rust-lld`
   5. **Linux ARM64 Static Musl**: `aarch64-unknown-linux-musl` static binary linked via `rust-lld`
   6. **Windows x86_64**: `x86_64-pc-windows-gnu` PE32+ console executable linked via MinGW-w64
@@ -387,13 +387,13 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
   - `make release-all`: Assembles and packages `.tar.gz` and `.zip` archives with automated SHA-256 checksum generation (`SHA256SUMS.txt`).
 
 ### Track 13: Mega-Project Scalability & Stress Benchmark Suite (1,000 to 10,000 Targets)
-> **Correction (2026-10-05):** the numbers in this section came from a flawed harness. Ninja was timed without its own `.ninja_log`, and make was given no goal, so in the modular graphs it built only the first rule. For re-measured results and the fixed harness (`benchmarks/scalability/fair_bench.sh`), see [docs/inside-makeyd.md §4](docs/inside-makeyd.md#4-benchmarks). Against Ninja, makeyd is slower on every null build, not 15× faster.
+> **Correction (2026-10-05):** the numbers in this section came from a flawed harness. Ninja was timed without its own `.ninja_log`, and make was given no goal, so in the modular graphs it built only the first rule. For re-measured results and the fixed harness (`benchmarks/scalability/fair_bench.sh`), see [docs/inside-maked.md §4](docs/inside-maked.md#4-benchmarks). Against Ninja, maked is slower on every null build, not 15× faster.
 
 - **Massive DAG Generator**: [benchmarks/scalability/generate_massive_dag.py](benchmarks/scalability/generate_massive_dag.py) synthesizing arbitrary scale DAGs (modular packages, deep sequential pipelines, diamond lattices, and fan-out clusters) up to 50,000 nodes.
 - **Benchmark Runner**: [benchmarks/scalability/run_scale_benchmark.py](benchmarks/scalability/run_scale_benchmark.py) evaluating cold builds, null-build traversal latency, dry-run parsing throughput, multi-threaded scaling (`-j1` to `-j16`), and peak RSS memory.
 - **Empirical Scalability Results ([benchmarks/scalability/scalability_report.json](benchmarks/scalability/scalability_report.json))**:
 
-| Scenario / Topology | Target Count | makeyd Null-Build | gmake 4.4.1 Null-Build | Ninja 1.12.1 Null-Build | makeyd Peak RSS | Parallel Scaling (-j16) |
+| Scenario / Topology | Target Count | maked Null-Build | gmake 4.4.1 Null-Build | Ninja 1.12.1 Null-Build | maked Peak RSS | Parallel Scaling (-j16) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Modular_1000** | 1,000 | **5.35 ms** | 3.31 ms | 56.28 ms | **4.9 MB** | 0.009s (cold: 0.136s) |
 | **Diamond_2500** | 2,500 | **38.72 ms** | 8.27 ms | 130.38 ms | **12.9 MB** | 0.041s (cold: 1.066s) |
@@ -401,7 +401,7 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 | **Modular_10000** | 10,000 | **37.36 ms** | 16.22 ms | 558.68 ms | **21.2 MB** | 0.039s (cold: 0.057s) |
 
 - **Key Takeaways**:
-  - `makeyd` traverses a 10,000-node graph in **37.36 ms**, outperforming official Ninja by **15.0x** (558.68 ms) while maintaining near parity with optimized GNU Make C code (16.22 ms).
+  - `maked` traverses a 10,000-node graph in **37.36 ms**, outperforming official Ninja by **15.0x** (558.68 ms) while maintaining near parity with optimized GNU Make C code (16.22 ms).
   - Peak RSS memory footprint remains under **22 MB** even when orchestrating 10,000 targets concurrently across 16 worker threads.
 
 ### Track 14: Formal Lean 4 Proof of the Critical Path DAG Algorithm
@@ -420,10 +420,10 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 - **Zero-Dependency Engine**: [rust_make/src/cache.rs](rust_make/src/cache.rs) providing distributed / local content-addressable storage (CAS).
 - **Cryptographic Cache Keying**: Deterministic SHA-256 fingerprint computed across:
   $$\text{Key}(T) = \mathcal{H}\Big(\text{target\_name} \parallel \text{sorted\_recipe\_lines} \parallel \sum_{p \in \text{prereqs}} \mathcal{H}(\text{content}_p)\Big)$$
-- **Instant Artifact Restoration**: If the cryptographic fingerprint matches an entry in the CAS repository (`.makeyd_cache/objects/`), the compiled artifact is hardlinked or copied directly into the target path without executing any recipe commands or subshells.
+- **Instant Artifact Restoration**: If the cryptographic fingerprint matches an entry in the CAS repository (`.maked_cache/objects/`), the compiled artifact is hardlinked or copied directly into the target path without executing any recipe commands or subshells.
 - **CLI Options**:
   - `--cache`: Enables content-addressable build caching.
-  - `--cache-dir=<DIR>`: Sets custom CAS cache repository directory (defaults to `.makeyd_cache`).
+  - `--cache-dir=<DIR>`: Sets custom CAS cache repository directory (defaults to `.maked_cache`).
 - **Telemetry Integration**: Tracked in `ExecutionStats.targets_cached` and logged during `--profile` reports.
 - **Verified**: Validated via [rust_make/tests/cache_tests.rs](rust_make/tests/cache_tests.rs) verifying that cached targets bypass recipe execution and restore exact file content.
 
@@ -433,14 +433,14 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
   - Compiles an evaluated `Makefile` DAG and expanded recipes into valid, standard `build.ninja` syntax.
   - Sanitizes Make command line execution prefixes (`@`, `-`, `+`), escapes literal dollar signs (`$$`), merges multi-line recipes, and deduplicates rule commands.
   - Generates standard `phony` rules for alias targets and emits `default <goal>` declarations.
-- **Native Ninja Execution Engine (`makeyd -f build.ninja`)**:
+- **Native Ninja Execution Engine (`maked -f build.ninja`)**:
   - Directly ingests and parses `build.ninja` files into the live `Makefile` AST without third-party dependencies or external Python/CMake tools.
   - Expands `$in` / `${in}`, `$out` / `${out}`, and top-level Ninja variables.
-  - Executes directly with all `makeyd` performance enhancements: multi-threaded parallel DAG executor, Jobserver support, Chrome Tracing, and CAS caching.
+  - Executes directly with all `maked` performance enhancements: multi-threaded parallel DAG executor, Jobserver support, Chrome Tracing, and CAS caching.
 - **Two-Way Parity Verification**:
   - Verified in [rust_make/tests/ninja_tests.rs](rust_make/tests/ninja_tests.rs):
-    1. Transpiling `Makefile` with `makeyd --emit-ninja` and executing the resulting `build.ninja` with official Google Ninja (`ninja -f build.ninja`).
-    2. Directly executing `build.ninja` with `makeyd -f build.ninja` and asserting 100% identical outputs and side effects.
+    1. Transpiling `Makefile` with `maked --emit-ninja` and executing the resulting `build.ninja` with official Google Ninja (`ninja -f build.ninja`).
+    2. Directly executing `build.ninja` with `maked -f build.ninja` and asserting 100% identical outputs and side effects.
 
 ### Track 17: Clang JSON Compilation Database Generation (`--emit-compdb`)
 - **IDE & Tooling Integration**: Generates standard Clang Compilation Database (`compile_commands.json`) compatible with Clangd, VSCode, Neovim, ccls, and `clang-tidy`.

@@ -125,7 +125,7 @@ impl JobServer {
                 let pid = std::process::id();
                 let cnt = COUNTER.fetch_add(1, Ordering::SeqCst);
                 let tmp_dir = std::env::temp_dir();
-                let fifo_path = tmp_dir.join(format!("makeyd_jobserver_{pid}_{cnt}.fifo"));
+                let fifo_path = tmp_dir.join(format!("maked_jobserver_{pid}_{cnt}.fifo"));
                 let c_path = std::ffi::CString::new(fifo_path.to_str().unwrap()).unwrap();
 
                 let res = unsafe { mkfifo(c_path.as_ptr(), 0o600) };
@@ -231,20 +231,109 @@ impl JobServer {
         }
     }
 
-    /// Update child MAKEFLAGS with --jobserver-auth
+    /// MAKEFLAGS for a recipe's environment, in GNU make's layout:
+    /// `<flag letters> -jN --jobserver-auth=... -- VAR=value ...`. Uses the
+    /// flags and command-line variables `main` registered with
+    /// `set_makeflags_base`; without them, extends `current`.
     pub fn child_makeflags(&self, current: &str) -> String {
-        if let Some(ref auth) = self.auth_str {
-            if current.contains("--jobserver-auth") || current.contains("--jobserver-fds") {
-                current.to_string()
-            } else {
-                format!("{current} -j{} --jobserver-auth={auth}", self.jobs)
-                    .trim()
-                    .to_string()
+        let jobs = self
+            .auth_str
+            .as_ref()
+            .map(|auth| format!("-j{} --jobserver-auth={auth}", self.jobs));
+        if let Some((letters, vars)) = MAKEFLAGS_BASE.get() {
+            let mut parts: Vec<String> = Vec::new();
+            if !letters.is_empty() {
+                parts.push(letters.clone());
             }
-        } else {
-            current.to_string()
+            if let Some(j) = jobs {
+                parts.push(j);
+            }
+            if !vars.is_empty() {
+                parts.push("--".to_string());
+                parts.extend(vars.iter().cloned());
+            }
+            return parts.join(" ");
+        }
+        match jobs {
+            Some(j)
+                if !current.contains("--jobserver-auth")
+                    && !current.contains("--jobserver-fds") =>
+            {
+                format!("{current} {j}").trim().to_string()
+            }
+            _ => current.to_string(),
         }
     }
+}
+
+static MAKEFLAGS_BASE: std::sync::OnceLock<(String, Vec<String>)> = std::sync::OnceLock::new();
+
+/// Record the single-letter flags (e.g. "ns") and command-line variable
+/// assignments (`VAR=value`, with `\` and spaces escaped) to pass down.
+pub fn set_makeflags_base(letters: String, vars: Vec<String>) {
+    let _ = MAKEFLAGS_BASE.set((letters, vars));
+}
+
+/// Turn an inherited MAKEFLAGS value into argv-style words that `main`
+/// parses before the real arguments: "ns -j8 --jobserver-auth=X -- V=1"
+/// becomes ["-n", "-s", "-j8", "--jobserver-auth=X", "V=1"].
+pub fn makeflags_to_args(makeflags: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut words = split_escaped(makeflags).into_iter();
+    let mut first = true;
+    while let Some(w) = words.next() {
+        if w == "--" {
+            out.extend(words.by_ref());
+            break;
+        }
+        if first && !w.starts_with('-') && !w.contains('=') {
+            out.extend(w.chars().map(|c| format!("-{c}")));
+        } else if w.contains('=') && !w.starts_with('-') {
+            out.push(w);
+        } else {
+            out.push(w);
+        }
+        first = false;
+    }
+    out
+}
+
+/// Split on unescaped spaces; `\ ` is a space and `\\` a backslash.
+fn split_escaped(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+            }
+            ' ' | '\t' => {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
+
+/// Escape a command-line assignment for MAKEFLAGS.
+pub fn escape_makeflags_word(w: &str) -> String {
+    let mut out = String::with_capacity(w.len());
+    for c in w.chars() {
+        if c == ' ' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Job count a sub-make should schedule with when it inherits a jobserver
@@ -275,6 +364,23 @@ pub fn inherited_jobs(makeflags: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_makeflags_to_args() {
+        assert_eq!(
+            makeflags_to_args("ns -j8 --jobserver-auth=fifo:/x -- V=1 W=a\\ b"),
+            vec![
+                "-n",
+                "-s",
+                "-j8",
+                "--jobserver-auth=fifo:/x",
+                "V=1",
+                "W=a b"
+            ]
+        );
+        assert_eq!(makeflags_to_args(" -j4"), vec!["-j4"]);
+        assert!(makeflags_to_args("").is_empty());
+    }
 
     #[test]
     fn test_inherited_jobs_from_makeflags() {

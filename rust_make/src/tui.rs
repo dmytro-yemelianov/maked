@@ -121,7 +121,7 @@ impl TuiReporter {
 
         let mut buf = String::new();
         buf.push_str(&format!(
-            "\r\x1b[K\x1b[1;36m┌─ makeyd v{:<6}─ Live Execution Dashboard ──────────────────────┐\x1b[0m\n",
+            "\r\x1b[K\x1b[1;36m┌─ maked v{:<6}─ Live Execution Dashboard ──────────────────────┐\x1b[0m\n",
             env!("CARGO_PKG_VERSION")
         ));
         buf.push_str(&format!(

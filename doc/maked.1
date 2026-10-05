@@ -1,8 +1,8 @@
-.TH MAKEYD 1 "October 2026" "makeyd 0.1.3" "User Commands"
+.TH MAKED 1 "October 2026" "maked 0.2.0" "User Commands"
 .SH NAME
-makeyd \- High-Performance POSIX/GNU-Compatible Build Utility Certified with Lean 4 Formal Semantics
+maked \- High-Performance POSIX/GNU-Compatible Build Utility Certified with Lean 4 Formal Semantics
 .SH SYNOPSIS
-.B makeyd
+.B maked
 [\fB\-B\fR]
 [\fB\-b\fR]
 [\fB\-C\fR \fIdir\fR]
@@ -25,7 +25,7 @@ makeyd \- High-Performance POSIX/GNU-Compatible Build Utility Certified with Lea
 [\fItarget\fR ...]
 
 .SH DESCRIPTION
-.B makeyd
+.B maked
 is a high-performance, memory-safe, dependency-directed build utility designed as a modern
 re-implementation of the classic Make build system. It adheres strictly to the
 .B IEEE Std 1003.1 (POSIX)
@@ -37,10 +37,10 @@ and features certified correctness proofs verified in the
 theorem prover.
 
 Additionally,
-.B makeyd
+.B maked
 supports an optional cryptographic content hashing mode (\fB\-\-hash\fR) powered by a zero-dependency
 FIPS 180-4 compliant SHA-256 digest engine, tracking file contents and recipe changes in a local
-cache database (\fB.makeyd.db\fR) to achieve build hermeticity and resistance against filesystem timestamp tampering.
+cache database (\fB.maked.db\fR) to achieve build hermeticity and resistance against filesystem timestamp tampering.
 
 .SH OPTIONS
 .TP
@@ -59,7 +59,7 @@ Command-line macro assignments (\fIVAR=VAL\fR) retain strict top priority.
 .TP
 .BI \-f " file"
 Use \fIfile\fR as the makefile. If omitted,
-.B makeyd
+.B maked
 searches for \fBMakefile\fR and \fBmakefile\fR in the current working directory.
 .TP
 .BR \-h ", " \-\-help
@@ -68,7 +68,7 @@ Print usage summary and options, then exit.
 .B \-\-hash
 Enable cryptographic SHA-256 content hashing. Targets and prerequisites are evaluated based on
 content digests and recipe command strings rather than filesystem modification timestamps.
-Build records are cached in \fB.makeyd.db\fR.
+Build records are cached in \fB.maked.db\fR.
 .TP
 .BR \-i ", " \-\-ignore\-errors
 Ignore non-zero return codes from all recipe commands.
@@ -107,7 +107,7 @@ Print version, standards compliance information, and formal verification credent
 .TP
 .BI \-\-worker\-listen= ADDR
 Run as a remote build worker on \fIADDR\fR. Requires a shared token in the file
-named by \fBMAKEYD_WORKER_TOKEN_FILE\fR or in \fBMAKEYD_WORKER_TOKEN\fR (at least 16 bytes).
+named by \fBMAKED_WORKER_TOKEN_FILE\fR or in \fBMAKED_WORKER_TOKEN\fR (at least 16 bytes).
 Non-loopback addresses are refused unless \fB\-\-worker\-allow\-remote\fR is given.
 Requests and responses are authenticated with HMAC-SHA256 but not encrypted.
 .TP
@@ -136,7 +136,7 @@ The stem of the target (target filename stripped of its suffix or pattern match)
 A literal dollar sign character.
 
 .SH BUILT-IN FUNCTIONS
-.B makeyd
+.B maked
 implements the complete GNU Make standard function library:
 .TP
 .B $(wildcard \fIpattern ...\fR)
@@ -207,7 +207,7 @@ Returns the last expansion if all are non-empty; otherwise expands to empty.
 
 .SH VPATH SEARCH
 When a target or prerequisite does not exist in the current working directory,
-.B makeyd
+.B maked
 searches directory search paths specified via:
 .IP 1.
 The \fBvpath\fR directive: \fBvpath\fR \fIpattern\fR \fIdirectories ...\fR
@@ -218,7 +218,7 @@ When found, the prerequisite path is updated so automatic variables ($<, $^) ref
 
 .SH FORMAL VERIFICATION
 The operational semantics of
-.B makeyd
+.B maked
 are formally specified and mechanically certified in
 .B Lean 4
 (\fIlean_make/LeanMake/Theorems.lean\fR).
@@ -250,7 +250,7 @@ A recipe command exited with an error; or in question mode (\fB\-q\fR), one or m
 A makefile syntax error, circular dependency cycle, or fatal invocation error occurred.
 
 .SH CONFORMANCE
-.B makeyd
+.B maked
 strictly complies with:
 .IP \(bu 2
 .B IEEE Std 1003.1-2017 (POSIX.1)

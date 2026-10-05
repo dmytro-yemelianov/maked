@@ -21,7 +21,7 @@ jobs:
     name: build (${{ matrix.target }})
     # Everything cross-compiles on the raps-ci Linux x64 box: GitHub-hosted
     # macOS/Windows images are billing-blocked for this account.
-    runs-on: [self-hosted, raps-ci, makeyd]
+    runs-on: [self-hosted, raps-ci, maked]
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -46,14 +46,14 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: makeyd-${{ matrix.target }}
+          name: maked-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
   release:
     name: Publish GitHub Release
     needs: [build]
-    runs-on: [self-hosted, raps-ci, makeyd]
+    runs-on: [self-hosted, raps-ci, maked]
     steps:
       - uses: actions/download-artifact@v4
         with:

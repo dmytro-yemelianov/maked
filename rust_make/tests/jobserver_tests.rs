@@ -3,19 +3,19 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-fn get_makeyd_bin() -> String {
+fn get_maked_bin() -> String {
     let mut path = std::env::current_exe().unwrap();
     path.pop(); // drop test binary name
     if path.ends_with("deps") {
         path.pop();
     }
-    path.push("makeyd");
+    path.push("maked");
     path.to_str().unwrap().to_string()
 }
 
 #[test]
 fn test_recursive_submake_jobserver_coordination() {
-    let makeyd = get_makeyd_bin();
+    let maked = get_maked_bin();
     let temp_dir = std::env::temp_dir().join(format!("test_jobserver_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -43,19 +43,19 @@ fn test_recursive_submake_jobserver_coordination() {
     let top_mf = temp_dir.join("Makefile");
     let mut f = File::create(&top_mf).unwrap();
     writeln!(f, "all: job1 job2").unwrap();
-    writeln!(f, "job1:\n\t@\"{}\" -C sub1", makeyd).unwrap();
-    writeln!(f, "job2:\n\t@\"{}\" -C sub2", makeyd).unwrap();
+    writeln!(f, "job1:\n\t@\"{}\" -C sub1", maked).unwrap();
+    writeln!(f, "job2:\n\t@\"{}\" -C sub2", maked).unwrap();
 
-    let output = Command::new(&makeyd)
+    let output = Command::new(&maked)
         .arg("-C")
         .arg(&temp_dir)
         .arg("-j4")
         .output()
-        .expect("failed to run makeyd");
+        .expect("failed to run maked");
 
     assert!(
         output.status.success(),
-        "makeyd failed: {}",
+        "maked failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -80,14 +80,14 @@ fn test_recursive_submake_jobserver_coordination() {
 }
 
 #[test]
-fn test_makeyd_under_gnu_make_jobserver() {
+fn test_maked_under_gnu_make_jobserver() {
     let gmake = "/opt/homebrew/bin/gmake";
     if !Path::new(gmake).exists() {
         eprintln!("GNU Make not found at {gmake}, skipping test");
         return;
     }
 
-    let makeyd = get_makeyd_bin();
+    let maked = get_maked_bin();
     let temp_dir =
         std::env::temp_dir().join(format!("test_gmake_jobserver_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
@@ -96,17 +96,17 @@ fn test_makeyd_under_gnu_make_jobserver() {
     let sub_dir = temp_dir.join("sub");
     fs::create_dir_all(&sub_dir).unwrap();
 
-    // sub Makefile executed by makeyd
+    // sub Makefile executed by maked
     let sub_mf = sub_dir.join("Makefile");
     let mut f = File::create(&sub_mf).unwrap();
     writeln!(f, "all: a b").unwrap();
-    writeln!(f, "a:\n\t@echo makeyd_job_a").unwrap();
-    writeln!(f, "b:\n\t@echo makeyd_job_b").unwrap();
+    writeln!(f, "a:\n\t@echo maked_job_a").unwrap();
+    writeln!(f, "b:\n\t@echo maked_job_b").unwrap();
 
     // Top-level Makefile executed by GNU Make with -j4
     let top_mf = temp_dir.join("Makefile");
     let mut f = File::create(&top_mf).unwrap();
-    writeln!(f, "all:\n\t@\"{}\" -C sub", makeyd).unwrap();
+    writeln!(f, "all:\n\t@\"{}\" -C sub", maked).unwrap();
 
     let output = Command::new(gmake)
         .arg("-C")
@@ -122,12 +122,12 @@ fn test_makeyd_under_gnu_make_jobserver() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("makeyd_job_a"),
-        "missing makeyd_job_a: {stdout}"
+        stdout.contains("maked_job_a"),
+        "missing maked_job_a: {stdout}"
     );
     assert!(
-        stdout.contains("makeyd_job_b"),
-        "missing makeyd_job_b: {stdout}"
+        stdout.contains("maked_job_b"),
+        "missing maked_job_b: {stdout}"
     );
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -138,8 +138,8 @@ fn test_makeyd_under_gnu_make_jobserver() {
 /// `cd src && $(MAKE) macosx` regression).
 #[test]
 fn test_recursive_submake_inherits_parallelism() {
-    let makeyd = get_makeyd_bin();
-    let temp_dir = std::env::temp_dir().join(format!("makeyd_recursive_j_{}", std::process::id()));
+    let maked = get_maked_bin();
+    let temp_dir = std::env::temp_dir().join(format!("maked_recursive_j_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     let sub = temp_dir.join("sub");
     fs::create_dir_all(&sub).unwrap();
@@ -153,19 +153,19 @@ fn test_recursive_submake_inherits_parallelism() {
     writeln!(f, "all:\n\t$(MAKE) -C sub").unwrap();
 
     let start = std::time::Instant::now();
-    let out = Command::new(&makeyd)
+    let out = Command::new(&maked)
         .arg("-C")
         .arg(&temp_dir)
         .arg("-j4")
         .env_remove("MAKEFLAGS")
         .output()
-        .expect("failed to run makeyd");
+        .expect("failed to run maked");
     let elapsed = start.elapsed();
     let _ = fs::remove_dir_all(&temp_dir);
 
     assert!(
         out.status.success(),
-        "makeyd failed: {}",
+        "maked failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     // Serial would be 4 x 0.4s = 1.6s; four slots finish in ~0.4s.

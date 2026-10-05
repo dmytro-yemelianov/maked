@@ -1,4 +1,4 @@
-//! Per-target recipe durations from earlier runs (`.makeyd_log`), and the
+//! Per-target recipe durations from earlier runs (`.maked_log`), and the
 //! scheduling priority computed from them.
 //!
 //! The parallel executor starts ready targets in order of their *bottom
@@ -13,8 +13,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-pub const LOG_FILENAME: &str = ".makeyd_log";
-const HEADER: &str = "# makeyd duration log v1: <microseconds>\t<target>";
+pub const LOG_FILENAME: &str = ".maked_log";
+const HEADER: &str = "# maked duration log v1: <microseconds>\t<target>";
 
 #[derive(Debug, Default, Clone)]
 pub struct DurationLog {
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_log_roundtrip() {
-        let path = std::env::temp_dir().join(format!("makeyd_log_{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("maked_log_{}", std::process::id()));
         let mut log = DurationLog::default();
         log.merge([("a b".to_string(), 42), ("c".to_string(), 7)]);
         log.save(&path).unwrap();

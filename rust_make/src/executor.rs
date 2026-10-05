@@ -85,13 +85,19 @@ pub struct Executor<'a> {
     pub cache: Arc<crate::cache::ContentAddressableCache>,
     pub remote_pool: Arc<crate::distributed::RemoteWorkerPool>,
     pub tui: crate::tui::TuiReporter,
+    pub recipe_env: Arc<crate::ast::RecipeEnv>,
 }
 
-/// Cross-platform shell command builder
+/// Cross-platform shell command builder (for `$(shell ...)`: /bin/sh).
 pub fn create_shell_command(cmd: &str) -> Command {
+    create_shell_command_with("/bin/sh", cmd)
+}
+
+/// Run `cmd` under `shell -c`. On Unix, `shell` is the makefile's `SHELL`
+/// (or /bin/sh); `$SHELL` from the environment is ignored, as in GNU make.
+pub fn create_shell_command_with(shell: &str, cmd: &str) -> Command {
     #[cfg(unix)]
     {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut c = Command::new(shell);
         if !cmd.is_empty() {
             c.arg("-c").arg(cmd);
@@ -100,6 +106,7 @@ pub fn create_shell_command(cmd: &str) -> Command {
     }
     #[cfg(windows)]
     {
+        let _ = shell;
         if let Ok(shell) = std::env::var("SHELL") {
             let mut c = Command::new(shell);
             if !cmd.is_empty() {
@@ -117,99 +124,108 @@ pub fn create_shell_command(cmd: &str) -> Command {
     }
 }
 
-/// Fast-path process execution: bypasses shell if no shell metacharacters exist!
-fn run_command_status_fast(
-    cmd: &str,
-    makeflags: Option<&str>,
-) -> std::io::Result<std::process::ExitStatus> {
-    let needs_shell = cmd.chars().any(|c| {
-        matches!(
-            c,
-            '*' | '?'
-                | '['
-                | ']'
-                | '~'
-                | '='
-                | '|'
-                | '&'
-                | ';'
-                | '<'
-                | '>'
-                | '('
-                | ')'
-                | '$'
-                | '`'
-                | '\\'
-                | '"'
-                | '\''
-                | '\n'
-        )
-    });
-
-    let mut command = if !needs_shell {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        if let Some((program, args)) = parts.split_first() {
-            let mut c = Command::new(program);
-            c.args(args);
-            c
-        } else {
-            create_shell_command("")
+/// Strip GNU recipe prefixes (`@` silent, `-` ignore errors, `+` run even
+/// under -n). Returns (rest, silent, ignore, force).
+pub fn recipe_prefixes(mut s: &str) -> (&str, bool, bool, bool) {
+    let (mut silent, mut ignore, mut force) = (false, false, false);
+    loop {
+        s = s.trim_start();
+        match s.chars().next() {
+            Some('@') => silent = true,
+            Some('-') => ignore = true,
+            Some('+') => force = true,
+            _ => return (s, silent, ignore, force),
         }
-    } else {
-        create_shell_command(cmd)
-    };
+        s = &s[1..];
+    }
+}
 
+/// A recipe line that runs a sub-make; GNU make runs these even under -n.
+fn mentions_make(raw: &str) -> bool {
+    raw.contains("$(MAKE)") || raw.contains("${MAKE}")
+}
+
+/// Build the process for one recipe line: direct exec when the line has no
+/// shell syntax and the shell is the default, else `SHELL -c line`. Applies
+/// exported and unexported variables and MAKEFLAGS.
+fn recipe_command(cmd: &str, makeflags: Option<&str>, env: &crate::ast::RecipeEnv) -> Command {
+    let needs_shell = env.shell != "/bin/sh"
+        || cmd.chars().any(|c| {
+            matches!(
+                c,
+                '*' | '?'
+                    | '['
+                    | ']'
+                    | '~'
+                    | '='
+                    | '|'
+                    | '&'
+                    | ';'
+                    | '<'
+                    | '>'
+                    | '('
+                    | ')'
+                    | '$'
+                    | '`'
+                    | '\\'
+                    | '"'
+                    | '\''
+                    | '\n'
+                    | '#'
+            )
+        });
+    // Shell builtins and keywords have no binary to exec (GNU make's list).
+    const SH_BUILTINS: &[&str] = &[
+        ".", ":", "alias", "bg", "break", "case", "cd", "command", "continue", "do", "done",
+        "elif", "else", "esac", "eval", "exec", "exit", "export", "fc", "fg", "fi", "for",
+        "getopts", "hash", "if", "jobs", "login", "logout", "read", "readonly", "return", "set",
+        "shift", "source", "test", "then", "times", "trap", "type", "ulimit", "umask", "unalias",
+        "unset", "until", "wait", "while", "{", "}", "!", "local", "[",
+    ];
+    let needs_shell = needs_shell
+        || cmd
+            .split_whitespace()
+            .next()
+            .is_some_and(|w| SH_BUILTINS.contains(&w));
+    let mut command = if needs_shell {
+        create_shell_command_with(&env.shell, cmd)
+    } else {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        match parts.split_first() {
+            Some((program, args)) => {
+                let mut c = Command::new(program);
+                c.args(args);
+                c
+            }
+            None => create_shell_command_with(&env.shell, ""),
+        }
+    };
+    for name in &env.unset {
+        command.env_remove(name);
+    }
+    for (k, v) in &env.set {
+        command.env(k, v);
+    }
     if let Some(mf) = makeflags {
         command.env("MAKEFLAGS", mf);
     }
-    command.status()
+    command
+}
+
+fn run_command_status_fast(
+    cmd: &str,
+    makeflags: Option<&str>,
+    env: &crate::ast::RecipeEnv,
+) -> std::io::Result<std::process::ExitStatus> {
+    recipe_command(cmd, makeflags, env).status()
 }
 
 fn run_command_output_fast(
     cmd: &str,
     makeflags: Option<&str>,
+    env: &crate::ast::RecipeEnv,
 ) -> std::io::Result<std::process::Output> {
-    let needs_shell = cmd.chars().any(|c| {
-        matches!(
-            c,
-            '*' | '?'
-                | '['
-                | ']'
-                | '~'
-                | '='
-                | '|'
-                | '&'
-                | ';'
-                | '<'
-                | '>'
-                | '('
-                | ')'
-                | '$'
-                | '`'
-                | '\\'
-                | '"'
-                | '\''
-                | '\n'
-        )
-    });
-
-    let mut command = if !needs_shell {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        if let Some((program, args)) = parts.split_first() {
-            let mut c = Command::new(program);
-            c.args(args);
-            c
-        } else {
-            create_shell_command("")
-        }
-    } else {
-        create_shell_command(cmd)
-    };
-
-    if let Some(mf) = makeflags {
-        command.env("MAKEFLAGS", mf);
-    }
-    command.output()
+    recipe_command(cmd, makeflags, env).output()
 }
 
 impl<'a> Executor<'a> {
@@ -240,7 +256,7 @@ impl<'a> Executor<'a> {
                 .cache_dir
                 .as_ref()
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from(".makeyd_cache")),
+                .unwrap_or_else(|| std::path::PathBuf::from(".maked_cache")),
         };
         let cache = Arc::new(crate::cache::ContentAddressableCache::new(cache_config));
         let remote_auth = if config.remote_workers.is_empty() {
@@ -263,6 +279,7 @@ impl<'a> Executor<'a> {
             tracer: crate::trace::TraceCollector::new(),
             cache,
             remote_pool,
+            recipe_env: Arc::new(makefile.recipe_env()),
             tui,
         }
     }
@@ -390,6 +407,7 @@ impl<'a> Executor<'a> {
                 TargetStatus::UpToDate(Some(mtime))
             }
             FreshnessDecision::NeedsRebuild(_reason) => {
+                let mtime_before = get_file_mtime(target);
                 if self.config.question {
                     stats.targets_rebuilt += 1;
                     return Ok(TargetStatus::Rebuilt(SystemTime::now()));
@@ -416,7 +434,7 @@ impl<'a> Executor<'a> {
                         restored_from_cache = true;
                         stats.targets_cached += 1;
                         if !self.config.silent {
-                            println!("[makeyd] Restored {target} from cache ({k})");
+                            println!("[maked] Restored {target} from cache ({k})");
                         }
                     }
                     Some(k)
@@ -470,41 +488,37 @@ impl<'a> Executor<'a> {
                     if !ran_remotely {
                         // Execute recipe commands locally
                         for raw_cmd in &rule.commands {
-                            let mut cmd_str = raw_cmd.trim_start();
-                            let mut is_silent = self.config.silent;
-                            let mut ignore_err = self.config.ignore_errors;
-
-                            while cmd_str.starts_with('@') || cmd_str.starts_with('-') {
-                                if cmd_str.starts_with('@') {
-                                    if !self.config.dry_run {
-                                        is_silent = true;
-                                    }
-                                    cmd_str = cmd_str[1..].trim_start();
-                                } else if cmd_str.starts_with('-') {
-                                    ignore_err = true;
-                                    cmd_str = cmd_str[1..].trim_start();
-                                }
-                            }
-
-                            let cmd = expand_variables(
+                            // Prefixes count before and after expansion
+                            // (`QUIET_CC = @printf ...`), as in GNU make.
+                            let (cmd_str, s1, i1, f1) = recipe_prefixes(raw_cmd);
+                            let expanded = expand_variables(
                                 cmd_str,
                                 self.makefile,
                                 Some(target),
                                 &rule.prereqs,
                             );
+                            let (cmd, s2, i2, f2) = recipe_prefixes(&expanded);
+                            let cmd = cmd.to_string();
+                            let force = f1 || f2 || mentions_make(raw_cmd);
+                            let run = !self.config.dry_run || force;
+                            // Under -n everything is printed, even with -s or `@`.
+                            let is_silent =
+                                !self.config.dry_run && (self.config.silent || s1 || s2);
+                            let ignore_err = self.config.ignore_errors || i1 || i2;
                             if !is_silent {
                                 println!("{cmd}");
                             }
-                            if !self.config.dry_run {
+                            if run {
                                 let cur_mf = std::env::var("MAKEFLAGS").unwrap_or_default();
                                 let child_mf = self.jobserver.child_makeflags(&cur_mf);
-                                let status = run_command_status_fast(&cmd, Some(&child_mf))
-                                    .map_err(|e| {
-                                        ExecutionError::CommandSpawnFailed(
-                                            cmd.clone(),
-                                            e.to_string(),
-                                        )
-                                    })?;
+                                let status = run_command_status_fast(
+                                    &cmd,
+                                    Some(&child_mf),
+                                    &self.recipe_env,
+                                )
+                                .map_err(|e| {
+                                    ExecutionError::CommandSpawnFailed(cmd.clone(), e.to_string())
+                                })?;
 
                                 if !status.success() && !ignore_err {
                                     let code = status.code().unwrap_or(1);
@@ -547,8 +561,16 @@ impl<'a> Executor<'a> {
                 }
 
                 stats.targets_rebuilt += 1;
-                let current_time = get_file_mtime(target).unwrap_or_else(SystemTime::now);
-                TargetStatus::Rebuilt(current_time)
+                let mtime_after = get_file_mtime(target);
+                // A recipe that left an existing file untouched (automake's
+                // `config.h: stamp-h1`) does not make dependents stale; GNU
+                // make re-stats the target in the same way.
+                match (mtime_before, mtime_after) {
+                    (Some(b), Some(a)) if a == b && !rule.is_phony && !self.config.dry_run => {
+                        TargetStatus::UpToDate(Some(a))
+                    }
+                    _ => TargetStatus::Rebuilt(mtime_after.unwrap_or_else(SystemTime::now)),
+                }
             }
         };
 
@@ -641,6 +663,7 @@ impl<'a> Executor<'a> {
             let jobserver_clone = Arc::clone(&jobserver_arc);
             let tracer_clone = self.tracer.clone();
             let remote_pool_clone = Arc::clone(&self.remote_pool);
+            let recipe_env_clone = Arc::clone(&self.recipe_env);
             let tui_clone = self.tui.clone();
             let worker_num = (worker_id + 1) as u32;
 
@@ -764,6 +787,7 @@ impl<'a> Executor<'a> {
                     let final_status = match decision {
                         FreshnessDecision::UpToDate(mtime) => TargetStatus::UpToDate(Some(mtime)),
                         FreshnessDecision::NeedsRebuild(_) => {
+                            let mtime_before = get_file_mtime(&task);
                             let _job_token = match jobserver_clone.acquire() {
                                 Ok(t) => t,
                                 Err(_) => {
@@ -796,7 +820,7 @@ impl<'a> Executor<'a> {
                                         num_cached_clone.fetch_add(1, Ordering::Relaxed);
                                         if !config.silent {
                                             output_lines.push(format!(
-                                                "[makeyd] Restored {task} from cache ({k})"
+                                                "[maked] Restored {task} from cache ({k})"
                                             ));
                                         }
                                     }
@@ -867,40 +891,33 @@ impl<'a> Executor<'a> {
                                                 break;
                                             }
 
-                                            let mut cmd_str = raw_cmd.trim_start();
-                                            let mut is_silent = config.silent;
-                                            let mut ignore_err = config.ignore_errors;
-
-                                            while cmd_str.starts_with('@')
-                                                || cmd_str.starts_with('-')
-                                            {
-                                                if cmd_str.starts_with('@') {
-                                                    if !config.dry_run {
-                                                        is_silent = true;
-                                                    }
-                                                    cmd_str = cmd_str[1..].trim_start();
-                                                } else if cmd_str.starts_with('-') {
-                                                    ignore_err = true;
-                                                    cmd_str = cmd_str[1..].trim_start();
-                                                }
-                                            }
-
-                                            let cmd = expand_variables(
+                                            let (cmd_str, s1, i1, f1) = recipe_prefixes(raw_cmd);
+                                            let expanded = expand_variables(
                                                 cmd_str,
                                                 &makefile,
                                                 Some(&task),
                                                 &rule.prereqs,
                                             );
+                                            let (cmd, s2, i2, f2) = recipe_prefixes(&expanded);
+                                            let cmd = cmd.to_string();
+                                            let force = f1 || f2 || mentions_make(raw_cmd);
+                                            let run = !config.dry_run || force;
+                                            let is_silent =
+                                                !config.dry_run && (config.silent || s1 || s2);
+                                            let ignore_err = config.ignore_errors || i1 || i2;
                                             if !is_silent {
                                                 output_lines.push(cmd.clone());
                                             }
-                                            if !config.dry_run {
+                                            if run {
                                                 let cur_mf =
                                                     std::env::var("MAKEFLAGS").unwrap_or_default();
                                                 let child_mf =
                                                     jobserver_clone.child_makeflags(&cur_mf);
-                                                let res =
-                                                    run_command_output_fast(&cmd, Some(&child_mf));
+                                                let res = run_command_output_fast(
+                                                    &cmd,
+                                                    Some(&child_mf),
+                                                    &recipe_env_clone,
+                                                );
 
                                                 match res {
                                                     Ok(out) => {
@@ -986,9 +1003,17 @@ impl<'a> Executor<'a> {
                                         },
                                     );
                                 }
-                                let current_time =
-                                    get_file_mtime(&task).unwrap_or_else(SystemTime::now);
-                                TargetStatus::Rebuilt(current_time)
+                                let mtime_after = get_file_mtime(&task);
+                                match (mtime_before, mtime_after) {
+                                    (Some(b), Some(a))
+                                        if a == b && !rule.is_phony && !config.dry_run =>
+                                    {
+                                        TargetStatus::UpToDate(Some(a))
+                                    }
+                                    _ => TargetStatus::Rebuilt(
+                                        mtime_after.unwrap_or_else(SystemTime::now),
+                                    ),
+                                }
                             }
                         }
                     };
@@ -1185,7 +1210,7 @@ impl<'a> Executor<'a> {
         })
     }
 
-    /// Merge the recipe durations measured in this run into `.makeyd_log`,
+    /// Merge the recipe durations measured in this run into `.maked_log`,
     /// which orders the next parallel run. Skipped when nothing ran a recipe
     /// (`-n`, `-t`, `-q`, null builds); a write failure only loses history.
     fn save_duration_log(&self) {
@@ -1243,6 +1268,7 @@ impl<'a> Executor<'a> {
     }
 
     pub fn execute(&self, root: &str) -> Result<ExecutionStats, ExecutionError> {
+        crate::ast::enter_execution_phase();
         if self.config.jobs > 1 {
             self.execute_parallel(root)
         } else {

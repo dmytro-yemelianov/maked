@@ -12,7 +12,7 @@ impl Default for CacheConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            cache_dir: PathBuf::from(".makeyd_cache"),
+            cache_dir: PathBuf::from(".maked_cache"),
         }
     }
 }
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn test_cas_cache_restore_and_keying() {
-        let temp_dir = std::env::temp_dir().join(format!("makeyd_test_cas_{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!("maked_test_cas_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
 
         let cache = ContentAddressableCache::new(CacheConfig {

@@ -1,8 +1,8 @@
-#compdef makeyd
+#compdef maked
 
-# Zsh completion for makeyd (POSIX/GNU compatible Make with formal Lean 4 semantics)
+# Zsh completion for maked (POSIX/GNU compatible Make with formal Lean 4 semantics)
 
-_makeyd() {
+_maked() {
     local curcontext="$curcontext" state line
     typeset -A opt_args
 
@@ -56,4 +56,4 @@ _makeyd() {
     esac
 }
 
-_makeyd "$@"
+_maked "$@"

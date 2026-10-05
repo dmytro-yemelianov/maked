@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-build makeyd for one target on Linux x86_64 and package it into dist/.
+# Cross-build maked for one target on Linux x86_64 and package it into dist/.
 #
 # Usage: scripts/ci/package.sh <target> <tag>
 #
@@ -13,7 +13,7 @@ target="$1"
 tag="$2"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 manifest="$root/rust_make/Cargo.toml"
-tools="${RUNNER_TOOL_CACHE:-$root/.tools}/makeyd-cross"
+tools="${RUNNER_TOOL_CACHE:-$root/.tools}/maked-cross"
 ZIG_VERSION="0.13.0"
 ZIGBUILD_VERSION="0.23.4"
 
@@ -32,7 +32,7 @@ ensure_zigbuild() {
   export PATH="$tools/bin:$tools/zig-linux-x86_64-$ZIG_VERSION:$PATH"
 }
 
-bin="makeyd"
+bin="maked"
 case "$target" in
   *-linux-musl)
     rustup target add "$target"
@@ -43,7 +43,7 @@ case "$target" in
     rustup target add "$target"
     CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
       cargo build --release --locked --target "$target" --manifest-path "$manifest"
-    bin="makeyd.exe"
+    bin="maked.exe"
     ;;
   universal2-apple-darwin)
     rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -63,15 +63,15 @@ out="$root/rust_make/target/$target/release/$bin"
 [ -f "$out" ] || { echo "missing build output $out" >&2; exit 1; }
 file "$out" || true
 
-stage="makeyd-$tag-$target"
+stage="maked-$tag-$target"
 rm -rf "$root/dist" && mkdir -p "$root/dist/$stage/completions" "$root/dist/$stage/man"
 cp "$out" "$root/dist/$stage/"
 cp "$root/README.md" "$root/LICENSE-MIT" "$root/LICENSE-APACHE" "$root/dist/$stage/"
-cp "$root"/completions/makeyd.* "$root/dist/$stage/completions/"
-cp "$root/doc/makeyd.1" "$root/dist/$stage/man/"
+cp "$root"/completions/maked.* "$root/dist/$stage/completions/"
+cp "$root/doc/maked.1" "$root/dist/$stage/man/"
 
 cd "$root/dist"
-if [ "$bin" = "makeyd.exe" ]; then
+if [ "$bin" = "maked.exe" ]; then
   zip -9 -q -r "$stage.zip" "$stage"
 else
   tar -czf "$stage.tar.gz" "$stage"

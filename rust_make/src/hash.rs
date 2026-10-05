@@ -173,14 +173,14 @@ pub struct TargetRecord {
     pub prereq_hashes: HashMap<String, String>,
 }
 
-/// Lightweight persistent database storing target build hashes in `.makeyd.db`
+/// Lightweight persistent database storing target build hashes in `.maked.db`
 #[derive(Debug, Clone, Default)]
 pub struct BuildDatabase {
     pub records: HashMap<String, TargetRecord>,
 }
 
 impl BuildDatabase {
-    pub const DB_FILENAME: &'static str = ".makeyd.db";
+    pub const DB_FILENAME: &'static str = ".maked.db";
 
     pub fn load<P: AsRef<Path>>(path: P) -> Self {
         let mut db = Self::default();
@@ -240,7 +240,7 @@ impl BuildDatabase {
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
         let mut file = fs::File::create(path)?;
-        writeln!(file, "# makeyd Cryptographic Hash Database v1")?;
+        writeln!(file, "# maked Cryptographic Hash Database v1")?;
         for (target, record) in &self.records {
             writeln!(file, "TARGET {}", target)?;
             writeln!(file, "TARGET_HASH {}", record.target_hash)?;

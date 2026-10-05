@@ -1,19 +1,19 @@
-# Inside makeyd: a make in Rust, a model in Lean, and the benchmark that lied
+# Inside maked: a make in Rust, a model in Lean, and the benchmark that lied
 
-*Dmytro Yemelianov · October 2026 · [makeyd v0.1.3](https://github.com/dmytro-yemelianov/makeyd/releases/tag/v0.1.3)*
+*Dmytro Yemelianov · October 2026 · [maked v0.2.0](https://github.com/dmytro-yemelianov/maked/releases/tag/v0.2.0)*
 
-makeyd ("make by Yemelianov Dmytro") is a POSIX make (IEEE Std 1003.1) with
+maked ("make + ed: Yemelianov (Emelyanov) Dmytro") is a POSIX make (IEEE Std 1003.1) with
 the GNU extensions people actually use. It is written in Rust with zero
 crates.io dependencies. An executable Lean 4 model of make's rebuild
 semantics sits next to it, and a differential fuzzer keeps the three parties
-honest: makeyd, GNU make and the Lean model. This article covers how makeyd
+honest: maked, GNU make and the Lean model. This article covers how maked
 is put together, what the Lean side does and does not prove, and how it
 performs. That includes the part where the first set of benchmark numbers
 turned out to be wrong.
 
 ## 1. The pipeline
 
-A make implementation is a small compiler followed by a scheduler. makeyd
+A make implementation is a small compiler followed by a scheduler. maked
 keeps the stages separate:
 
 ```mermaid
@@ -36,9 +36,9 @@ flowchart LR
 | `freshness.rs` | 165 | The rebuild decision: POSIX mtime rules or content hashes |
 | `executor.rs` | 1,118 | Sequential and parallel schedulers, the shell-bypass fast path, recursive-make plumbing |
 | `jobserver.rs` | 317 | GNU make jobserver, both master and client (`--jobserver-auth=fifo:` and fd pairs) |
-| `hash.rs` | 284 | A from-scratch FIPS 180-4 SHA-256 and the `.makeyd.db` build database |
+| `hash.rs` | 284 | A from-scratch FIPS 180-4 SHA-256 and the `.maked.db` build database |
 | `cache.rs` | 137 | Content-addressable artifact cache |
-| `ninja.rs` | 240 | `--emit-ninja` and a native `build.ninja` reader (`makeyd -f build.ninja`) |
+| `ninja.rs` | 240 | `--emit-ninja` and a native `build.ninja` reader (`maked -f build.ninja`) |
 | `compdb.rs` | 239 | `--emit-compdb`: a Clang `compile_commands.json` derived from the rules |
 | `trace.rs` | 247 | `--trace`: a Chrome/Perfetto JSON timeline, plus `--profile` |
 | `tui.rs` | 185 | `--tui`: a raw-ANSI live dashboard that falls back to plain output when not on a TTY |
@@ -57,7 +57,7 @@ the *alias* case: a target with no recipe and no file on disk. It inherits
 the newest prerequisite time instead of forcing a rebuild. Getting that
 wrong makes every `all:` target rebuild forever.
 
-`--hash` swaps timestamps for content. For each target, `.makeyd.db`
+`--hash` swaps timestamps for content. For each target, `.maked.db`
 records three things:
 
 - the target's own SHA-256;
@@ -78,7 +78,7 @@ checked for shell metacharacters. Lines without them are `exec`'d directly,
 skipping `/bin/sh -c`. GNU make has the same fast path, and it matters: with
 thousands of tiny recipes, process creation dominates.
 
-The jobserver speaks GNU make's token protocol in both directions. makeyd
+The jobserver speaks GNU make's token protocol in both directions. maked
 can be the master, creating a FIFO and passing `--jobserver-auth` down
 through `MAKEFLAGS`. It can also be a client running under GNU make. The
 test suite checks both directions and confirms that neither side
@@ -92,7 +92,7 @@ With `--cache`, an action's key is
 SHA-256( target ‖ recipe lines ‖ sorted (prerequisite, SHA-256(content)) )
 ```
 
-On a hit, the artifact is copied out of `.makeyd_cache/objects/` and the
+On a hit, the artifact is copied out of `.maked_cache/objects/` and the
 recipe never runs. On a miss, the recipe runs and its output is stored. This
 is the same idea as Bazel's action cache, at the scale of a single make
 invocation. The key only covers what make can see, though. A recipe that
@@ -167,7 +167,7 @@ Precision matters here, because "formally verified" gets used loosely:
 
 ### Using the bounds: `--profile`
 
-`makeyd --profile` measures each run against those bounds. It takes rule
+`maked --profile` measures each run against those bounds. It takes rule
 durations from the trace, timed only once a job holds a jobserver slot, so
 waiting for a slot is not counted as work. Here is Lua 5.4.9 built directly
 in `src/` (all compiles visible to one scheduler) on the M5:
@@ -186,7 +186,7 @@ the 21% is not scheduling at all: total work rises from 3.7 s to 5.9 s
 because every compile slows down when more of them share the CPU (the M5
 mixes performance and efficiency cores).
 
-Two limits apply. That makeyd's executor is greedy is an argument about the
+Two limits apply. That maked's executor is greedy is an argument about the
 Rust code, not a proof: the coordinator hands a ready target to a worker as
 soon as one is free. And a recursive `$(MAKE)` appears as a single job whose
 time includes the whole sub-make.
@@ -201,7 +201,7 @@ at job start times, and the theorem shows that this suffices.
 `benchmarks/fuzzer/schedule_fuzz.py` runs on every CI build:
 
 1. It builds 25 random DAGs whose recipes sleep for 10–60 ms, with
-   `makeyd -j2…4 --trace`.
+   `maked -j2…4 --trace`.
 2. It gives each recorded schedule to the Lean checker.
 3. It fails unless the schedule is valid (prerequisites first, at most `m`
    jobs at once) and within Graham's bound.
@@ -214,7 +214,7 @@ wrong slot count in the harness gets caught on real runs.
 Before v0.1.2, ready targets went to workers in hash-map order. Now they wait
 in a priority queue ordered by *bottom level*: the target's own duration
 plus the longest chain of targets that depend on it. Durations come from
-`.makeyd_log`, which makeyd writes after each build, much like Ninja's
+`.maked_log`, which maked writes after each build, much like Ninja's
 `.ninja_log`. Without history, the hop count stands in. Any order that never
 leaves a slot idle while work is ready keeps Graham's bound, so the theorem
 still applies.
@@ -236,14 +236,14 @@ needs a worker.
 - **53 Rust tests.** They cover POSIX behavior (`-B`, `-q`, `-t`), VPATH,
   metaprogramming with `eval`/`call` and second expansion, depfiles, the
   jobserver in both directions, the CAS workflow, Ninja round-trips
-  (`--emit-ninja` run by real Ninja, and `-f build.ninja` run by makeyd),
+  (`--emit-ninja` run by real Ninja, and `-f build.ninja` run by maked),
   the compilation database, distributed workers with fallback, and the
   TUI.
 - **A three-way differential fuzzer** (`benchmarks/fuzzer/fuzz_runner.py`).
   It generates 50 random DAGs and puts each through four phases: initial
   build, idempotent re-run, an incremental rebuild after modifying a leaf,
   and the `-q` question mode. In every phase it compares the exact set of
-  rebuilt targets across makeyd, GNU make and the Lean model, and any
+  rebuilt targets across maked, GNU make and the Lean model, and any
   disagreement fails CI. The current result is 50/50. That is evidence, not
   proof: it says nothing about Makefiles the generator never produces.
 
@@ -256,19 +256,19 @@ fuzzer.
 
 The first internal report claimed two things:
 
-- makeyd null-builds a 10,000-target graph **15× faster than Ninja**;
-- makeyd beats GNU make on Lua.
+- maked null-builds a 10,000-target graph **15× faster than Ninja**;
+- maked beats GNU make on Lua.
 
 Both claims came from measurement bugs. The second look found these:
 
-1. **Ninja was timed without its log.** The harness ran makeyd and GNU make
+1. **Ninja was timed without its log.** The harness ran maked and GNU make
    in the same directory, then "null-built" with Ninja. Ninja keeps its own
    `.ninja_log` and had never built that tree. Fifteen hyperfine runs with no
-   warmup therefore averaged in real rebuilds. The "15×" compared makeyd
+   warmup therefore averaged in real rebuilds. The "15×" compared maked
    doing nothing against Ninja doing work.
 2. **make was building one file.** In the generated *modular* Makefiles,
    `all:` is the *last* rule. With no goal given, make builds the *first*
-   rule: one `.o` file. GNU make and makeyd were checking a single target
+   rule: one `.o` file. GNU make and maked were checking a single target
    while Ninja (`default all`) checked 10,000. Here the error happened to
    favor make.
 
@@ -285,11 +285,11 @@ works as follows:
 ### Results (v0.1.1)
 
 Machine: Apple M5 (10 cores), macOS (Darwin 27.2), GNU Make 4.4.1,
-Ninja 1.13.2, makeyd 0.1.1, all at `-j8`. Mean ± σ.
+Ninja 1.13.2, maked 0.1.1, all at `-j8`. Mean ± σ.
 
 **Null build (everything up to date), milliseconds.** Lower is better.
 
-| Graph | makeyd | GNU make | Ninja | makeyd peak RSS |
+| Graph | maked | GNU make | Ninja | maked peak RSS |
 | --- | ---: | ---: | ---: | ---: |
 | modular, 1,000 targets | 9.8 ± 0.8 | 18.2 ± 1.3 | **4.2 ± 0.4** | 6.5 MB |
 | modular, 5,000 | 43.9 ± 1.7 | 93.2 ± 8.9 | **15.7 ± 1.6** | 17.9 MB |
@@ -302,7 +302,7 @@ Ninja 1.13.2, makeyd 0.1.1, all at `-j8`. Mean ± σ.
 **Cold build, seconds** (5 runs; Lua 3 runs). Every recipe is a `touch`,
 except for Lua, which really compiles.
 
-| Graph | makeyd | GNU make | Ninja |
+| Graph | maked | GNU make | Ninja |
 | --- | ---: | ---: | ---: |
 | modular, 1,000 | 0.44 ± 0.11 | **0.25 ± 0.01** | 0.70 ± 0.02 |
 | modular, 5,000 | 1.61 ± 0.04 | **1.21 ± 0.04** | 3.67 ± 0.25 |
@@ -318,18 +318,18 @@ except for Lua, which really compiles.
   was built for: a pre-lowered manifest, no variable expansion, no
   implicit-rule search, and a binary log. A make has to re-parse and
   re-evaluate the Makefile on every run.
-- **On null builds, makeyd is 1.8–2.4× faster than GNU make on modular
+- **On null builds, maked is 1.8–2.4× faster than GNU make on modular
   and wide graphs, and ties on Lua.** On diamond and deep graphs it is
   still 1.7–2.1× slower, which is 15 against 7 ms and 10 against 6 ms. The
   remaining cost there is coordinating worker threads on graphs with
   almost no parallelism.
-- **On cold synthetic builds, GNU make is 1.3–1.75× faster than makeyd,
+- **On cold synthetic builds, GNU make is 1.3–1.75× faster than maked,
   and both makes beat Ninja by 2–3.5×.** The likely reason, which I have
   not profiled: both makes `exec` simple recipes directly, while Ninja
   always goes through `/bin/sh -c`. GNU make's 16–20 s on the wide fan-out
   graph reproduces in every run, with high variance. I haven't explained it yet, so read
   it as a measured anomaly, not a win.
-- **On Lua, makeyd and GNU make are at parity** for both full and null
+- **On Lua, maked and GNU make are at parity** for both full and null
   builds.
 
 ### What v0.1.1 fixed
@@ -338,20 +338,20 @@ The v0.1.0 measurements found three real bugs. Each now has a regression
 test:
 
 1. **Job slots lost through recursive `$(MAKE)`.** A sub-make gets its
-   `-jN` and `--jobserver-auth` through `MAKEFLAGS`, but makeyd read the job
+   `-jN` and `--jobserver-auth` through `MAKEFLAGS`, but maked read the job
    count only from argv. Every sub-make therefore ran at `-j1`. Lua's
    `cd src && $(MAKE) macosx` took 2.6 s at `-j8`, exactly as long as at
    `-j1`. The sub-make now inherits the job count, and the shared token pool
    still caps total concurrency. Lua at `-j8`: 2.62 s → 1.07 s, against
    GNU make's 0.98 s in the same run.
-2. **O(depth²) critical-path analysis.** After every build, makeyd computes
+2. **O(depth²) critical-path analysis.** After every build, maked computes
    the critical path, and it memoized a full copy of the best path at every
    node. On a 4,000-long chain that cost 345 MB. It now stores only the best
    predecessor per node, iteratively, so cost is O(V + E): 4,000-deep went
    from 345 MB to 14 MB.
 3. **Stack overflow on deep graphs.** Cycle checking and sequential
    evaluation recurse once per dependency level, and a 12,000-long chain
-   aborted with a stack overflow that GNU make does not have. makeyd now runs
+   aborted with a stack overflow that GNU make does not have. maked now runs
    on a thread with a 256 MiB reserved stack (virtual memory, committed only
    as used). A 20,000-deep chain is in the test suite.
 
@@ -369,10 +369,54 @@ Null builds from v0.1.0 to v0.1.1, end to end: the 2,000-long chain went
 from 62.6 ms to 9.9 ms, diamond from 37.7 ms to 15.1 ms, and modular 10,000
 from 223.6 ms to 97.5 ms.
 
-## 5. Shipping it
+## 5. Real projects
+
+Random DAGs exercise scheduling and freshness, but real makefiles exercise
+the language. `benchmarks/realworld/run.py` builds zlib, sqlite (autotools),
+redis (recursive makefiles), git (one very large GNU makefile), jq
+(autotools and libtool) and Lua with maked and with GNU make. It compares the
+builds, smoke tests, produced files, null builds and incremental rebuilds.
+The first runs failed in almost every project, each time on something the
+fuzzer never generates:
+
+- **Parser:** comments after `include`/`endif`, `\#`, tab-indented
+  conditionals outside rules, space-indented lines wrongly read as recipes,
+  static pattern rules, double-colon rules, order-only prerequisites, globs
+  in prerequisite lists, `export`/`unexport`/`override`, computed variable
+  names, and rules whose targets expand to nothing.
+- **Semantics:**
+  - `.DEFAULT` and `.PHONY` targets without rules;
+  - `$<` coming from the rule that has the recipe;
+  - `$+`, `$?`, `$|` and the `D`/`F` forms of automatic variables;
+  - recipe prefixes (`@ - +`) that appear only after expansion;
+  - `-n` printing every line and still running `$(MAKE)` lines;
+  - several goals sharing a prerequisite, which must run once;
+  - exit status 2 on failure.
+- **Missing functions:** `findstring`, `wordlist`, `abspath`, `realpath`,
+  `origin`, `flavor`, `file`, `intcmp` and `let`.
+- **Environment:** recipes ran under the user's login `$SHELL` instead of
+  `/bin/sh`; `CC` from the environment lost to the built-in default; the
+  built-in C rule ignored `CPPFLAGS`; exported variables never reached
+  recipes; shell builtins such as `:` were exec'd as programs; and `-n`,
+  `-s` and command-line variables did not reach sub-makes through
+  `MAKEFLAGS`.
+- **Two that broke incremental builds:**
+  1. A recipe that runs but leaves its target untouched, like automake's
+     `config.h: stamp-h1`, made every dependent stale. GNU make re-stats the
+     target after its recipe, and maked now does the same.
+  2. Makefiles that generate their own includes (git's `GIT-VERSION-FILE`)
+     need GNU make's "remaking makefiles" rule. Included makefiles that have
+     rules are brought up to date first, then maked restarts to read them.
+     Without that, git's first build reported an empty version, and every
+     null build after it relinked all 166 programs.
+
+Each fix has a differential test that runs the minimal case under both
+tools. All six projects now match GNU make on every check.
+
+## 6. Shipping it
 
 CI and releases run on **raps-ci**, a shared self-hosted Linux x86_64 box
-(`runs-on: [self-hosted, raps-ci, makeyd]`). GitHub-hosted macOS and Windows
+(`runs-on: [self-hosted, raps-ci, maked]`). GitHub-hosted macOS and Windows
 runners aren't available for this account. So every release target is
 **cross-compiled from Linux** by one script,
 [`scripts/ci/package.sh`](../scripts/ci/package.sh):
@@ -400,7 +444,7 @@ platform with no `fork`, no `exec` and no `/bin/sh`, can parse your Makefile
 and then do nothing. A `no_std` parser and dependency-graph library for
 microcontrollers would be a different product.
 
-## 6. Known gaps
+## 7. Known gaps
 
 - On graphs with almost no parallelism (diamond, deep chains), null builds
   are still 1.7–2.1× slower than GNU make. Cold synthetic builds are
@@ -416,8 +460,11 @@ microcontrollers would be a different product.
 - The macOS binaries are not notarized.
 - No refinement proof connects the Lean model and the Rust code. Two
   fuzzers are the bridge: one for rebuild decisions and one for schedules.
-- `.makeyd_log` is a new file in the build directory. Add it to
+- `.maked_log` is a new file in the build directory. Add it to
   `.gitignore`.
+- The approximations listed under *Compatibility* in the README: merged
+  double-colon rules, order-only prerequisites, `$(flavor)`, `$(eval)`
+  during the build, and `-k`.
 
 The code, the benchmark harness and its raw JSON are all in the repository:
-<https://github.com/dmytro-yemelianov/makeyd>.
+<https://github.com/dmytro-yemelianov/maked>.

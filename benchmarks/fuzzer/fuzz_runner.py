@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-3-Way Differential Oracle Suite: makeyd (Rust) vs GNU Make (POSIX/C) vs Lean 4 Formal Model
+3-Way Differential Oracle Suite: maked (Rust) vs GNU Make (POSIX/C) vs Lean 4 Formal Model
 Tests random DAG topologies with varying depths, fan-outs, diamond dependencies,
 phony targets, and incremental file modifications.
 Verifies that:
-1. makeyd and gmake make identical physical build and rebuild decisions.
-2. The Lean 4 formal operational semantics model agrees 100% with makeyd and gmake on DAG freshness.
+1. maked and gmake make identical physical build and rebuild decisions.
+2. The Lean 4 formal operational semantics model agrees 100% with maked and gmake on DAG freshness.
 """
 
 import os
@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parents[2]
-MAKEYD_BIN = WORKSPACE / "rust_make/target/release/makeyd"
+MAKED_BIN = WORKSPACE / "rust_make/target/release/maked"
 GMAKE_BIN = Path("/opt/homebrew/bin/gmake") if Path("/opt/homebrew/bin/gmake").exists() else Path("/usr/bin/make")
 LEAN_MAKE_BIN = WORKSPACE / "lean_make/.lake/build/bin/lean_make"
 
@@ -166,7 +166,7 @@ def get_disk_mtimes(d: Path) -> dict:
     return mtimes
 
 def run_differential_test(seed: int) -> dict:
-    with tempfile.TemporaryDirectory(prefix="makeyd_3way_oracle_") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="maked_3way_oracle_") as tmpdir:
         workdir = Path(tmpdir)
         gen = DAGGenerator(seed)
         leaves, rules, leaf_mtimes = gen.generate_dag(workdir)
@@ -178,61 +178,61 @@ def run_differential_test(seed: int) -> dict:
         }
 
         # ---------------- Phase 1: Clean Initial Build (3-way) ----------------
-        makeyd_dir = workdir / "makeyd_run"
+        maked_dir = workdir / "maked_run"
         gmake_dir = workdir / "gmake_run"
-        shutil.copytree(workdir, makeyd_dir, ignore=shutil.ignore_patterns("makeyd_run", "gmake_run"))
-        shutil.copytree(workdir, gmake_dir, ignore=shutil.ignore_patterns("makeyd_run", "gmake_run"))
+        shutil.copytree(workdir, maked_dir, ignore=shutil.ignore_patterns("maked_run", "gmake_run"))
+        shutil.copytree(workdir, gmake_dir, ignore=shutil.ignore_patterns("maked_run", "gmake_run"))
 
         spec1 = workdir / "spec1.txt"
         generate_lean_spec(rules, leaf_mtimes, "all", spec1)
 
-        out_makeyd_1 = run_make_command([str(MAKEYD_BIN), "all"], makeyd_dir)
+        out_maked_1 = run_make_command([str(MAKED_BIN), "all"], maked_dir)
         out_gmake_1 = run_make_command([str(GMAKE_BIN), "all"], gmake_dir)
         out_lean_1 = run_lean_make(spec1)
 
-        if out_makeyd_1["rebuilt"] != out_gmake_1["rebuilt"]:
+        if out_maked_1["rebuilt"] != out_gmake_1["rebuilt"]:
             test_result["passed"] = False
             test_result["discrepancies"].append({
-                "phase": "Phase 1: makeyd vs gmake Initial Build",
-                "makeyd_rebuilt": out_makeyd_1["rebuilt"],
+                "phase": "Phase 1: maked vs gmake Initial Build",
+                "maked_rebuilt": out_maked_1["rebuilt"],
                 "gmake_rebuilt": out_gmake_1["rebuilt"],
             })
 
-        if out_makeyd_1["rebuilt"] != out_lean_1["rebuilt"]:
+        if out_maked_1["rebuilt"] != out_lean_1["rebuilt"]:
             test_result["passed"] = False
             test_result["discrepancies"].append({
-                "phase": "Phase 1: makeyd vs Lean 4 Formal Model Initial Build",
-                "makeyd_rebuilt": out_makeyd_1["rebuilt"],
+                "phase": "Phase 1: maked vs Lean 4 Formal Model Initial Build",
+                "maked_rebuilt": out_maked_1["rebuilt"],
                 "lean_rebuilt": out_lean_1["rebuilt"],
             })
 
         # ---------------- Phase 2: Re-run Parity & Idempotency (3-way) ----------------
-        out_makeyd_2 = run_make_command([str(MAKEYD_BIN), "all"], makeyd_dir)
+        out_maked_2 = run_make_command([str(MAKED_BIN), "all"], maked_dir)
         out_gmake_2 = run_make_command([str(GMAKE_BIN), "all"], gmake_dir)
 
-        makeyd_concrete_rebuilt = [t for t in out_makeyd_2["rebuilt"] if t != "all"]
+        maked_concrete_rebuilt = [t for t in out_maked_2["rebuilt"] if t != "all"]
         gmake_concrete_rebuilt = [t for t in out_gmake_2["rebuilt"] if t != "all"]
 
-        if makeyd_concrete_rebuilt != gmake_concrete_rebuilt:
+        if maked_concrete_rebuilt != gmake_concrete_rebuilt:
             test_result["passed"] = False
             test_result["discrepancies"].append({
-                "phase": "Phase 2: makeyd vs gmake Re-run Parity",
-                "makeyd_concrete_rebuilt": makeyd_concrete_rebuilt,
+                "phase": "Phase 2: maked vs gmake Re-run Parity",
+                "maked_concrete_rebuilt": maked_concrete_rebuilt,
                 "gmake_concrete_rebuilt": gmake_concrete_rebuilt,
             })
 
-        # Reflect exact physical filesystem state from makeyd_dir into Lean model
-        phase2_mtimes = get_disk_mtimes(makeyd_dir)
+        # Reflect exact physical filesystem state from maked_dir into Lean model
+        phase2_mtimes = get_disk_mtimes(maked_dir)
         spec2 = workdir / "spec2.txt"
         generate_lean_spec(rules, phase2_mtimes, "all", spec2)
         out_lean_2 = run_lean_make(spec2)
 
         lean_concrete_rebuilt = [t for t in out_lean_2["rebuilt"] if t != "all"]
-        if makeyd_concrete_rebuilt != lean_concrete_rebuilt:
+        if maked_concrete_rebuilt != lean_concrete_rebuilt:
             test_result["passed"] = False
             test_result["discrepancies"].append({
-                "phase": "Phase 2: makeyd vs Lean 4 Idempotency",
-                "makeyd_concrete_rebuilt": makeyd_concrete_rebuilt,
+                "phase": "Phase 2: maked vs Lean 4 Idempotency",
+                "maked_concrete_rebuilt": maked_concrete_rebuilt,
                 "lean_concrete_rebuilt": lean_concrete_rebuilt,
             })
 
@@ -241,45 +241,45 @@ def run_differential_test(seed: int) -> dict:
         max_existing_mtime = max(phase2_mtimes.values())
         new_mtime = max_existing_mtime + 500
 
-        (makeyd_dir / mod_leaf).write_text(f"// modified leaf\nint x = {seed};\n")
+        (maked_dir / mod_leaf).write_text(f"// modified leaf\nint x = {seed};\n")
         (gmake_dir / mod_leaf).write_text(f"// modified leaf\nint x = {seed};\n")
-        os.utime(makeyd_dir / mod_leaf, (new_mtime, new_mtime))
+        os.utime(maked_dir / mod_leaf, (new_mtime, new_mtime))
         os.utime(gmake_dir / mod_leaf, (new_mtime, new_mtime))
 
-        phase3_mtimes = get_disk_mtimes(makeyd_dir)
+        phase3_mtimes = get_disk_mtimes(maked_dir)
         spec3 = workdir / "spec3.txt"
         generate_lean_spec(rules, phase3_mtimes, "all", spec3)
 
-        out_makeyd_3 = run_make_command([str(MAKEYD_BIN), "all"], makeyd_dir)
+        out_maked_3 = run_make_command([str(MAKED_BIN), "all"], maked_dir)
         out_gmake_3 = run_make_command([str(GMAKE_BIN), "all"], gmake_dir)
         out_lean_3 = run_lean_make(spec3)
 
-        if out_makeyd_3["rebuilt"] != out_gmake_3["rebuilt"]:
+        if out_maked_3["rebuilt"] != out_gmake_3["rebuilt"]:
             test_result["passed"] = False
             test_result["discrepancies"].append({
-                "phase": f"Phase 3: makeyd vs gmake Incremental Rebuild on {mod_leaf}",
-                "makeyd_rebuilt": out_makeyd_3["rebuilt"],
+                "phase": f"Phase 3: maked vs gmake Incremental Rebuild on {mod_leaf}",
+                "maked_rebuilt": out_maked_3["rebuilt"],
                 "gmake_rebuilt": out_gmake_3["rebuilt"],
             })
 
-        if out_makeyd_3["rebuilt"] != out_lean_3["rebuilt"]:
+        if out_maked_3["rebuilt"] != out_lean_3["rebuilt"]:
             test_result["passed"] = False
             test_result["discrepancies"].append({
-                "phase": f"Phase 3: makeyd vs Lean 4 Incremental Rebuild on {mod_leaf}",
-                "makeyd_rebuilt": out_makeyd_3["rebuilt"],
+                "phase": f"Phase 3: maked vs Lean 4 Incremental Rebuild on {mod_leaf}",
+                "maked_rebuilt": out_maked_3["rebuilt"],
                 "lean_rebuilt": out_lean_3["rebuilt"],
             })
 
         # ---------------- Phase 4: Question Mode (-q) ----------------
         non_phony_tgt = rules[0]["target"]
-        q_makeyd = run_make_command([str(MAKEYD_BIN), "-q", non_phony_tgt], makeyd_dir)
+        q_maked = run_make_command([str(MAKED_BIN), "-q", non_phony_tgt], maked_dir)
         q_gmake = run_make_command([str(GMAKE_BIN), "-q", non_phony_tgt], gmake_dir)
 
-        if q_makeyd["exit_code"] != q_gmake["exit_code"]:
+        if q_maked["exit_code"] != q_gmake["exit_code"]:
             test_result["passed"] = False
             test_result["discrepancies"].append({
                 "phase": "Phase 4: Question Mode (-q)",
-                "makeyd_code": q_makeyd["exit_code"],
+                "maked_code": q_maked["exit_code"],
                 "gmake_code": q_gmake["exit_code"],
             })
 
@@ -288,10 +288,10 @@ def run_differential_test(seed: int) -> dict:
 def main():
     num_iterations = 50
     print("=" * 70)
-    print("3-Way Differential Oracle Suite: makeyd (Rust) vs gmake vs Lean 4 Formal Model")
+    print("3-Way Differential Oracle Suite: maked (Rust) vs gmake vs Lean 4 Formal Model")
     print("=" * 70)
     print(f"[*] Target Binaries:")
-    print(f"    - makeyd:     {MAKEYD_BIN}")
+    print(f"    - maked:     {MAKED_BIN}")
     print(f"    - gmake:     {GMAKE_BIN}")
     print(f"    - lean_make: {LEAN_MAKE_BIN}")
     print(f"[*] Executing {num_iterations} randomized DAG topologies across 4 phases each...")
@@ -305,7 +305,7 @@ def main():
         if res["passed"]:
             passed_count += 1
             if seed % 10 == 0 or seed == num_iterations:
-                print(f"  [+] Topology {seed:2d}/{num_iterations}: 100% 3-WAY PARITY (makeyd == gmake == Lean 4)")
+                print(f"  [+] Topology {seed:2d}/{num_iterations}: 100% 3-WAY PARITY (maked == gmake == Lean 4)")
         else:
             print(f"  [-] Topology {seed:2d}/{num_iterations}: DISCREPANCY DETECTED!")
             for d in res["discrepancies"]:
@@ -321,7 +321,7 @@ def main():
     print("=" * 70)
 
     summary = {
-        "suite": "3-Way Differential Oracle (makeyd vs gmake vs Lean 4)",
+        "suite": "3-Way Differential Oracle (maked vs gmake vs Lean 4)",
         "total_topologies": num_iterations,
         "passed": passed_count,
         "failed": len(failures),

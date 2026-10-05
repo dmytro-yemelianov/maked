@@ -1,6 +1,6 @@
-use makeyd::executor::{ExecutionConfig, Executor};
-use makeyd::graph::DependencyGraph;
-use makeyd::parser::parse_makefile_content;
+use maked::executor::{ExecutionConfig, Executor};
+use maked::graph::DependencyGraph;
+use maked::parser::parse_makefile_content;
 use std::fs;
 
 fn make_config() -> ExecutionConfig {
@@ -32,7 +32,7 @@ all:
     let mf = parse_makefile_content(makefile_content, &[]).expect("parse failed");
     let val = mf.get_var("nested").expect("var nested not found");
     assert_eq!(
-        makeyd::parser::expand_variables(&val, &mf, None, &[]),
+        maked::parser::expand_variables(&val, &mf, None, &[]),
         "b a_end"
     );
 }
@@ -48,7 +48,7 @@ all:
 ";
     let mf = parse_makefile_content(makefile_content, &[]).expect("parse failed");
     let val = mf.get_var("MAPPED").expect("var MAPPED not found");
-    let expanded = makeyd::parser::expand_variables(&val, &mf, None, &[]);
+    let expanded = maked::parser::expand_variables(&val, &mf, None, &[]);
     assert_eq!(expanded, "a.o b.o c.o d.o");
 }
 
@@ -104,7 +104,7 @@ prog_default:
 
     // Check debug target CFLAGS
     let debug_rule = mf.get_rule("prog_debug").expect("prog_debug rule");
-    let cmd_debug = makeyd::parser::expand_variables(
+    let cmd_debug = maked::parser::expand_variables(
         &debug_rule.commands[0],
         &mf,
         Some("prog_debug"),
@@ -114,7 +114,7 @@ prog_default:
 
     // Check release target CFLAGS
     let release_rule = mf.get_rule("prog_release").expect("prog_release rule");
-    let cmd_release = makeyd::parser::expand_variables(
+    let cmd_release = maked::parser::expand_variables(
         &release_rule.commands[0],
         &mf,
         Some("prog_release"),
@@ -124,7 +124,7 @@ prog_default:
 
     // Check default target CFLAGS (fallback to global)
     let default_rule = mf.get_rule("prog_default").expect("prog_default rule");
-    let cmd_default = makeyd::parser::expand_variables(
+    let cmd_default = maked::parser::expand_variables(
         &default_rule.commands[0],
         &mf,
         Some("prog_default"),
@@ -149,7 +149,7 @@ util.o: util.c
 
     // main.o should use target-specific CFLAGS
     let main_rule = mf.get_rule("main.o").expect("main.o rule");
-    let cmd_main = makeyd::parser::expand_variables(
+    let cmd_main = maked::parser::expand_variables(
         &main_rule.commands[0],
         &mf,
         Some("main.o"),
@@ -159,7 +159,7 @@ util.o: util.c
 
     // util.o should match %.o pattern-specific CFLAGS
     let util_rule = mf.get_rule("util.o").expect("util.o rule");
-    let cmd_util = makeyd::parser::expand_variables(
+    let cmd_util = maked::parser::expand_variables(
         &util_rule.commands[0],
         &mf,
         Some("util.o"),
@@ -170,7 +170,7 @@ util.o: util.c
 
 #[test]
 fn test_second_expansion_prerequisites() {
-    let test_dir = std::env::temp_dir().join("makeyd_second_expansion_test");
+    let test_dir = std::env::temp_dir().join("maked_second_expansion_test");
     let _ = fs::create_dir_all(&test_dir);
     let f1 = test_dir.join("sub1.c");
     let f2 = test_dir.join("sub2.c");
@@ -206,7 +206,7 @@ prog: $$(DEPS)
     assert!(rule.prereqs.contains(&f2.to_str().unwrap().to_string()));
 
     let cmd_expanded =
-        makeyd::parser::expand_variables(&rule.commands[0], &mf, Some("prog"), &rule.prereqs);
+        maked::parser::expand_variables(&rule.commands[0], &mf, Some("prog"), &rule.prereqs);
     assert_eq!(
         cmd_expanded,
         format!("@echo PREREQS={} {}", f1.display(), f2.display())
@@ -217,7 +217,7 @@ prog: $$(DEPS)
 
 #[test]
 fn test_second_expansion_with_automatic_variables() {
-    let test_dir = std::env::temp_dir().join("makeyd_second_expansion_auto_test");
+    let test_dir = std::env::temp_dir().join("maked_second_expansion_auto_test");
     let _ = fs::create_dir_all(&test_dir);
     let app_src = test_dir.join("app.c");
     fs::write(&app_src, "int main() {}").unwrap();
@@ -238,7 +238,7 @@ fn test_second_expansion_with_automatic_variables() {
     let rule = mf.get_rule(app_obj.to_str().unwrap()).expect("app.o rule");
     assert_eq!(rule.prereqs, vec![app_src.to_str().unwrap().to_string()]);
 
-    let cmd_exp = makeyd::parser::expand_variables(
+    let cmd_exp = maked::parser::expand_variables(
         &rule.commands[0],
         &mf,
         Some(app_obj.to_str().unwrap()),

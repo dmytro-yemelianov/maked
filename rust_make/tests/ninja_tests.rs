@@ -3,7 +3,7 @@ use std::process::Command;
 
 #[test]
 fn test_ninja_emit_and_direct_execution() {
-    let temp_dir = std::env::temp_dir().join(format!("makeyd_test_ninja_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!("maked_test_ninja_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
@@ -28,11 +28,11 @@ obj2.o: src2.txt
     fs::write(temp_dir.join("src1.txt"), "hello_").unwrap();
     fs::write(temp_dir.join("src2.txt"), "ninja\n").unwrap();
 
-    let makeyd_bin = env!("CARGO_BIN_EXE_makeyd");
+    let maked_bin = env!("CARGO_BIN_EXE_maked");
     let ninja_file = temp_dir.join("build.ninja");
 
-    // 1. Transpile Makefile to build.ninja using makeyd --emit-ninja
-    let out_emit = Command::new(makeyd_bin)
+    // 1. Transpile Makefile to build.ninja using maked --emit-ninja
+    let out_emit = Command::new(maked_bin)
         .arg("-f")
         .arg(&makefile_path)
         .arg(format!("--emit-ninja={}", ninja_file.display()))
@@ -78,8 +78,8 @@ obj2.o: src2.txt
         let _ = fs::remove_file(temp_dir.join("obj2.o"));
     }
 
-    // 3. Execute build.ninja directly using makeyd (-f build.ninja)
-    let out_makeyd_ninja = Command::new(makeyd_bin)
+    // 3. Execute build.ninja directly using maked (-f build.ninja)
+    let out_maked_ninja = Command::new(maked_bin)
         .arg("-f")
         .arg(&ninja_file)
         .current_dir(&temp_dir)
@@ -87,9 +87,9 @@ obj2.o: src2.txt
         .unwrap();
 
     assert!(
-        out_makeyd_ninja.status.success(),
-        "makeyd executing ninja failed: {}",
-        String::from_utf8_lossy(&out_makeyd_ninja.stderr)
+        out_maked_ninja.status.success(),
+        "maked executing ninja failed: {}",
+        String::from_utf8_lossy(&out_maked_ninja.stderr)
     );
     assert!(temp_dir.join("app").exists());
     assert_eq!(
@@ -103,7 +103,7 @@ obj2.o: src2.txt
 #[test]
 fn test_ninja_handcrafted_syntax() {
     let temp_dir = std::env::temp_dir().join(format!(
-        "makeyd_test_ninja_handcrafted_{}",
+        "maked_test_ninja_handcrafted_{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&temp_dir);
@@ -112,7 +112,7 @@ fn test_ninja_handcrafted_syntax() {
     let ninja_content = r#"
 # Hand-crafted Ninja specification
 cflags = -O3
-msg = "Building with native makeyd ninja engine"
+msg = "Building with native maked ninja engine"
 
 rule cc
   command = echo "$msg" && cat $in > $out
@@ -133,8 +133,8 @@ default final_prog
     fs::write(temp_dir.join("part1.c"), "A").unwrap();
     fs::write(temp_dir.join("part2.c"), "B").unwrap();
 
-    let makeyd_bin = env!("CARGO_BIN_EXE_makeyd");
-    let out = Command::new(makeyd_bin)
+    let maked_bin = env!("CARGO_BIN_EXE_maked");
+    let out = Command::new(maked_bin)
         .arg("-f")
         .arg(&ninja_file)
         .current_dir(&temp_dir)
@@ -143,7 +143,7 @@ default final_prog
 
     assert!(
         out.status.success(),
-        "makeyd failed to execute handcrafted build.ninja: {}",
+        "maked failed to execute handcrafted build.ninja: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(temp_dir.join("part1.o").exists());

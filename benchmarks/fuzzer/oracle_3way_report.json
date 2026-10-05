@@ -1,9 +1,9 @@
 {
-  "suite": "3-Way Differential Oracle (makeyd vs gmake vs Lean 4)",
+  "suite": "3-Way Differential Oracle (maked vs gmake vs Lean 4)",
   "total_topologies": 50,
   "passed": 50,
   "failed": 0,
   "pass_rate_pct": 100.0,
-  "elapsed_seconds": 8.628167152404785,
+  "elapsed_seconds": 17.02686905860901,
   "failures": []
 }

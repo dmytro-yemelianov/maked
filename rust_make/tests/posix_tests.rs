@@ -1,6 +1,6 @@
-use makeyd::executor::{ExecutionConfig, Executor};
-use makeyd::graph::DependencyGraph;
-use makeyd::parser::parse_makefile_content;
+use maked::executor::{ExecutionConfig, Executor};
+use maked::graph::DependencyGraph;
+use maked::parser::parse_makefile_content;
 use std::fs;
 use std::process::Command;
 
@@ -41,7 +41,7 @@ target_dry:
 
 #[test]
 fn test_posix_always_make_flag() {
-    let temp_dir = std::env::temp_dir().join("makeyd_posix_always_make");
+    let temp_dir = std::env::temp_dir().join("maked_posix_always_make");
     let _ = fs::create_dir_all(&temp_dir);
     let tgt_file = temp_dir.join("existing_target.o");
     fs::write(&tgt_file, "binary").expect("write target");
@@ -80,7 +80,7 @@ fn test_posix_always_make_flag() {
 
 #[test]
 fn test_posix_question_mode() {
-    let temp_dir = std::env::temp_dir().join("makeyd_posix_question");
+    let temp_dir = std::env::temp_dir().join("maked_posix_question");
     let _ = fs::create_dir_all(&temp_dir);
     let tgt_file = temp_dir.join("q_target.o");
 
@@ -119,7 +119,7 @@ fn test_posix_question_mode() {
 
 #[test]
 fn test_posix_touch_mode() {
-    let temp_dir = std::env::temp_dir().join("makeyd_posix_touch");
+    let temp_dir = std::env::temp_dir().join("maked_posix_touch");
     let _ = fs::create_dir_all(&temp_dir);
     let tgt_file = temp_dir.join("touched_target.o");
 
@@ -223,12 +223,12 @@ app:
     assert_eq!(mf.get_var("CFLAGS"), Some("-O3".to_string()));
 }
 
-/// GNU make handles dependency chains thousands of targets deep; makeyd used
+/// GNU make handles dependency chains thousands of targets deep; maked used
 /// to overflow its stack around 12k and spend O(depth^2) memory before that.
 #[test]
 fn test_deep_dependency_chain() {
     const N: usize = 20_000;
-    let temp_dir = std::env::temp_dir().join(format!("makeyd_deep_chain_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!("maked_deep_chain_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
     let mut mf = String::from(".PHONY: all\n");
@@ -239,7 +239,7 @@ fn test_deep_dependency_chain() {
     }
     fs::write(temp_dir.join("Makefile"), mf).unwrap();
 
-    let bin = env!("CARGO_BIN_EXE_makeyd");
+    let bin = env!("CARGO_BIN_EXE_maked");
     for jobs in ["-j1", "-j8"] {
         let out = Command::new(bin)
             .arg("-C")

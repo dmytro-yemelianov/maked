@@ -1,6 +1,6 @@
-# Bash completion for makeyd (POSIX/GNU compatible Make with formal Lean 4 semantics)
+# Bash completion for maked (POSIX/GNU compatible Make with formal Lean 4 semantics)
 
-_makeyd_completions() {
+_maked_completions() {
     local cur prev words cword
     _init_completion -n : || return
 
@@ -53,4 +53,4 @@ _makeyd_completions() {
     fi
 }
 
-complete -F _makeyd_completions makeyd
+complete -F _maked_completions maked

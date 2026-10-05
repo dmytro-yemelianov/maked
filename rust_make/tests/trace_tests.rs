@@ -2,19 +2,19 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::process::Command;
 
-fn get_makeyd_bin() -> String {
+fn get_maked_bin() -> String {
     let mut path = std::env::current_exe().unwrap();
     path.pop();
     if path.ends_with("deps") {
         path.pop();
     }
-    path.push("makeyd");
+    path.push("maked");
     path.to_str().unwrap().to_string()
 }
 
 #[test]
 fn test_chrome_trace_perfetto_export_and_critical_path() {
-    let makeyd = get_makeyd_bin();
+    let maked = get_maked_bin();
     let temp_dir = std::env::temp_dir().join(format!("test_trace_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -36,18 +36,18 @@ fn test_chrome_trace_perfetto_export_and_critical_path() {
     writeln!(mf, "\t@echo \"BUILT a\"").unwrap();
     drop(mf);
 
-    let output = Command::new(&makeyd)
+    let output = Command::new(&maked)
         .arg("-C")
         .arg(&temp_dir)
         .arg("-j4")
         .arg("--profile")
         .arg(format!("--trace={}", trace_path.display()))
         .output()
-        .expect("failed to run makeyd");
+        .expect("failed to run maked");
 
     assert!(
         output.status.success(),
-        "makeyd failed: {}",
+        "maked failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);

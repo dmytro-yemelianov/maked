@@ -3,7 +3,7 @@ use std::process::Command;
 
 #[test]
 fn test_emit_compdb_cli() {
-    let temp_dir = std::env::temp_dir().join(format!("makeyd_test_compdb_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!("maked_test_compdb_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
@@ -42,11 +42,11 @@ main.o: main.c
     .unwrap();
     fs::write(temp_dir.join("main.c"), "int main() { return 0; }").unwrap();
 
-    let makeyd_bin = env!("CARGO_BIN_EXE_makeyd");
+    let maked_bin = env!("CARGO_BIN_EXE_maked");
     let compdb_file = temp_dir.join("compile_commands.json");
 
     // 1. Generate compilation database via --emit-compdb
-    let out = Command::new(makeyd_bin)
+    let out = Command::new(maked_bin)
         .arg("-f")
         .arg(&makefile_path)
         .arg(format!("--emit-compdb={}", compdb_file.display()))
@@ -56,7 +56,7 @@ main.o: main.c
 
     assert!(
         out.status.success(),
-        "makeyd --emit-compdb failed: {}",
+        "maked --emit-compdb failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(compdb_file.exists());

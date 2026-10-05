@@ -20,10 +20,10 @@
      `max (W / m) L` when `L` is the exact critical path, a greedy schedule
      is within 2× of optimal.
 
-  What this does not say: the theorems are about this model. That makeyd's
+  What this does not say: the theorems are about this model. That maked's
   executor is greedy in this sense is an argument about the Rust code
   (ready targets go straight to a shared queue served by `m` workers), not a
-  proof. `makeyd --profile` reports the measured makespan against both
+  proof. `maked --profile` reports the measured makespan against both
   bounds.
 -/
 
@@ -361,7 +361,7 @@ theorem greedy_makespan_bound (hV : Valid I S) (hG : Greedy I S)
 
 /-! ### 3. An executable checker for recorded schedules
 
-`makeyd --trace` records when every job started and how long it ran. The
+`maked --trace` records when every job started and how long it ran. The
 fuzzer feeds those schedules to `lean_make --schedule`, which uses the
 functions below: the same `busy`, `fin` and `Valid` the theorems are about.
 Capacity is checked only at job start times. `checkValid_sound` shows that

@@ -4,7 +4,7 @@ use std::process::Command;
 #[test]
 fn test_content_addressable_cache_workflow() {
     let temp_dir =
-        std::env::temp_dir().join(format!("makeyd_test_cas_workflow_{}", std::process::id()));
+        std::env::temp_dir().join(format!("maked_test_cas_workflow_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
@@ -26,11 +26,11 @@ obj.o: src.txt
     let src_path = temp_dir.join("src.txt");
     fs::write(&src_path, "source_v1\n").unwrap();
 
-    let makeyd_bin = env!("CARGO_BIN_EXE_makeyd");
+    let maked_bin = env!("CARGO_BIN_EXE_maked");
     let cache_dir = temp_dir.join(".custom_cas");
 
     // 1. Initial Cold Build with --cache
-    let out1 = Command::new(makeyd_bin)
+    let out1 = Command::new(maked_bin)
         .arg("-f")
         .arg(&makefile_path)
         .arg("--cache")
@@ -54,7 +54,7 @@ obj.o: src.txt
     assert!(!temp_dir.join("obj.o").exists());
 
     // 3. Re-run build with --cache: both app and obj.o should be RESTORED FROM CACHE!
-    let out2 = Command::new(makeyd_bin)
+    let out2 = Command::new(maked_bin)
         .arg("-f")
         .arg(&makefile_path)
         .arg("--cache")

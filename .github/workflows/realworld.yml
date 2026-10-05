@@ -1,0 +1,46 @@
+name: Real-world compatibility
+
+# Builds zlib, sqlite, redis, git, jq and Lua with maked and with GNU make
+# and compares builds, smoke tests, null builds and incremental rebuilds
+# (benchmarks/realworld/run.py).
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: realworld-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  realworld:
+    runs-on: [self-hosted, raps-ci, maked]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build maked
+        run: cargo build --release --manifest-path rust_make/Cargo.toml
+
+      - name: Tarball cache
+        uses: actions/cache@v4
+        with:
+          path: benchmarks/realworld/.cache
+          key: realworld-tarballs-v1
+
+      - name: Build real projects with maked and GNU make
+        run: python3 benchmarks/realworld/run.py
+
+      - name: Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: realworld-logs
+          path: |
+            benchmarks/realworld/logs
+            benchmarks/realworld/report.json

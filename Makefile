@@ -1,5 +1,5 @@
-# Top-level Makefile for makeyd (make by Yemelianov Dmytro) & LeanMake
-# Installs makeyd, manual page (makeyd.1), and shell completions
+# Top-level Makefile for maked (make + ed: Yemelianov (Emelyanov) Dmytro) & LeanMake
+# Installs maked, manual page (maked.1), and shell completions
 
 PREFIX ?= /usr/local
 DESTDIR ?=
@@ -9,7 +9,7 @@ BASHCOMPDIR = $(DESTDIR)$(PREFIX)/share/bash-completion/completions
 ZSHCOMPDIR = $(DESTDIR)$(PREFIX)/share/zsh/site-functions
 FISHCOMPDIR = $(DESTDIR)$(PREFIX)/share/fish/vendor_completions.d
 
-MAKEYD_BIN = rust_make/target/release/makeyd
+MAKED_BIN = rust_make/target/release/maked
 
 VERSION ?= 0.1.0
 DISTDIR = dist
@@ -17,7 +17,7 @@ DISTDIR = dist
 all: build-rust build-lean
 
 build-rust:
-	@echo "==> Building makeyd (optimized release)..."
+	@echo "==> Building maked (optimized release)..."
 	@cargo build --release --manifest-path rust_make/Cargo.toml
 
 build-lean:
@@ -27,7 +27,7 @@ build-lean:
 test: test-rust test-lean test-fuzz
 
 test-rust:
-	@echo "==> Running makeyd test suite..."
+	@echo "==> Running maked test suite..."
 	@cargo test --manifest-path rust_make/Cargo.toml
 
 test-lean:
@@ -47,25 +47,25 @@ release-macos:
 	@cargo build --release --target aarch64-apple-darwin --manifest-path rust_make/Cargo.toml
 	@cargo build --release --target x86_64-apple-darwin --manifest-path rust_make/Cargo.toml
 	@echo "==> Assembling Universal 2 binary..."
-	@lipo -create -output $(DISTDIR)/makeyd rust_make/target/aarch64-apple-darwin/release/makeyd rust_make/target/x86_64-apple-darwin/release/makeyd
-	@tar -czf $(DISTDIR)/makeyd-v$(VERSION)-apple-darwin-universal.tar.gz -C $(DISTDIR) makeyd
-	@rm -f $(DISTDIR)/makeyd
-	@tar -czf $(DISTDIR)/makeyd-v$(VERSION)-aarch64-apple-darwin.tar.gz -C rust_make/target/aarch64-apple-darwin/release makeyd
-	@tar -czf $(DISTDIR)/makeyd-v$(VERSION)-x86_64-apple-darwin.tar.gz -C rust_make/target/x86_64-apple-darwin/release makeyd
+	@lipo -create -output $(DISTDIR)/maked rust_make/target/aarch64-apple-darwin/release/maked rust_make/target/x86_64-apple-darwin/release/maked
+	@tar -czf $(DISTDIR)/maked-v$(VERSION)-apple-darwin-universal.tar.gz -C $(DISTDIR) maked
+	@rm -f $(DISTDIR)/maked
+	@tar -czf $(DISTDIR)/maked-v$(VERSION)-aarch64-apple-darwin.tar.gz -C rust_make/target/aarch64-apple-darwin/release maked
+	@tar -czf $(DISTDIR)/maked-v$(VERSION)-x86_64-apple-darwin.tar.gz -C rust_make/target/x86_64-apple-darwin/release maked
 
 release-musl:
 	@echo "==> Building static Linux Musl binaries (x86_64 & aarch64)..."
 	@mkdir -p $(DISTDIR)
 	@RUSTFLAGS="-C linker=rust-lld" cargo build --release --target x86_64-unknown-linux-musl --manifest-path rust_make/Cargo.toml
 	@RUSTFLAGS="-C linker=rust-lld" cargo build --release --target aarch64-unknown-linux-musl --manifest-path rust_make/Cargo.toml
-	@tar -czf $(DISTDIR)/makeyd-v$(VERSION)-x86_64-unknown-linux-musl.tar.gz -C rust_make/target/x86_64-unknown-linux-musl/release makeyd
-	@tar -czf $(DISTDIR)/makeyd-v$(VERSION)-aarch64-unknown-linux-musl.tar.gz -C rust_make/target/aarch64-unknown-linux-musl/release makeyd
+	@tar -czf $(DISTDIR)/maked-v$(VERSION)-x86_64-unknown-linux-musl.tar.gz -C rust_make/target/x86_64-unknown-linux-musl/release maked
+	@tar -czf $(DISTDIR)/maked-v$(VERSION)-aarch64-unknown-linux-musl.tar.gz -C rust_make/target/aarch64-unknown-linux-musl/release maked
 
 release-windows:
 	@echo "==> Building Windows PE32+ binary (x86_64)..."
 	@mkdir -p $(DISTDIR)
 	@CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=/opt/homebrew/bin/x86_64-w64-mingw32-gcc cargo build --release --target x86_64-pc-windows-gnu --manifest-path rust_make/Cargo.toml
-	@cd rust_make/target/x86_64-pc-windows-gnu/release && zip -9 -q ../../../../$(DISTDIR)/makeyd-v$(VERSION)-x86_64-pc-windows-gnu.zip makeyd.exe
+	@cd rust_make/target/x86_64-pc-windows-gnu/release && zip -9 -q ../../../../$(DISTDIR)/maked-v$(VERSION)-x86_64-pc-windows-gnu.zip maked.exe
 
 checksums:
 	@echo "==> Generating SHA-256 checksums..."
@@ -73,28 +73,28 @@ checksums:
 	@cat $(DISTDIR)/SHA256SUMS.txt
 
 install: build-rust
-	@echo "==> Installing makeyd binary to $(BINDIR)..."
+	@echo "==> Installing maked binary to $(BINDIR)..."
 	@mkdir -p $(BINDIR)
-	@cp -f $(MAKEYD_BIN) $(BINDIR)/makeyd
-	@chmod 755 $(BINDIR)/makeyd
+	@cp -f $(MAKED_BIN) $(BINDIR)/maked
+	@chmod 755 $(BINDIR)/maked
 
 	@echo "==> Installing Unix manual page to $(MANDIR)..."
 	@mkdir -p $(MANDIR)
-	@cp -f doc/makeyd.1 $(MANDIR)/makeyd.1
-	@chmod 644 $(MANDIR)/makeyd.1
+	@cp -f doc/maked.1 $(MANDIR)/maked.1
+	@chmod 644 $(MANDIR)/maked.1
 
 	@echo "==> Installing shell completions..."
-	@mkdir -p $(BASHCOMPDIR) && cp -f completions/makeyd.bash $(BASHCOMPDIR)/makeyd
-	@mkdir -p $(ZSHCOMPDIR) && cp -f completions/makeyd.zsh $(ZSHCOMPDIR)/_makeyd
-	@mkdir -p $(FISHCOMPDIR) && cp -f completions/makeyd.fish $(FISHCOMPDIR)/makeyd.fish
+	@mkdir -p $(BASHCOMPDIR) && cp -f completions/maked.bash $(BASHCOMPDIR)/maked
+	@mkdir -p $(ZSHCOMPDIR) && cp -f completions/maked.zsh $(ZSHCOMPDIR)/_maked
+	@mkdir -p $(FISHCOMPDIR) && cp -f completions/maked.fish $(FISHCOMPDIR)/maked.fish
 
 uninstall:
-	@echo "==> Uninstalling makeyd..."
-	@rm -f $(BINDIR)/makeyd
-	@rm -f $(MANDIR)/makeyd.1
-	@rm -f $(BASHCOMPDIR)/makeyd
-	@rm -f $(ZSHCOMPDIR)/_makeyd
-	@rm -f $(FISHCOMPDIR)/makeyd.fish
+	@echo "==> Uninstalling maked..."
+	@rm -f $(BINDIR)/maked
+	@rm -f $(MANDIR)/maked.1
+	@rm -f $(BASHCOMPDIR)/maked
+	@rm -f $(ZSHCOMPDIR)/_maked
+	@rm -f $(FISHCOMPDIR)/maked.fish
 
 clean:
 	@cargo clean --manifest-path rust_make/Cargo.toml

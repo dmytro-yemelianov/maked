@@ -3,7 +3,7 @@ use std::process::Command;
 
 #[test]
 fn test_tui_dashboard_execution() {
-    let temp_dir = std::env::temp_dir().join(format!("makeyd_test_tui_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!("maked_test_tui_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
@@ -25,10 +25,10 @@ target3: target1 target2
     let makefile_path = temp_dir.join("Makefile");
     fs::write(&makefile_path, makefile_content).unwrap();
 
-    let makeyd_bin = env!("CARGO_BIN_EXE_makeyd");
+    let maked_bin = env!("CARGO_BIN_EXE_maked");
 
     // Run with --tui in non-interactive / piped environment (assert fallback line printing works without panic)
-    let out = Command::new(makeyd_bin)
+    let out = Command::new(maked_bin)
         .arg("-f")
         .arg(&makefile_path)
         .arg("-j4")
@@ -39,7 +39,7 @@ target3: target1 target2
 
     assert!(
         out.status.success(),
-        "makeyd --tui build failed: {}",
+        "maked --tui build failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 

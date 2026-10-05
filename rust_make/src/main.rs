@@ -1,6 +1,6 @@
-use makeyd::executor::{ExecutionConfig, Executor};
-use makeyd::graph::DependencyGraph;
-use makeyd::parser::parse_makefile_content;
+use maked::executor::{ExecutionConfig, Executor};
+use maked::graph::DependencyGraph;
+use maked::parser::parse_makefile_content;
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 fn print_help() {
     println!(
-        "Usage: makeyd [options] [target] ...\n\
+        "Usage: maked [options] [target] ...\n\
          Options:\n  \
            -f FILE       Read FILE as a makefile\n  \
            -j [N]        Allow N jobs at once; default is 1 (or num_cpus if N omitted)\n  \
@@ -21,11 +21,11 @@ fn print_help() {
            --trace=FILE  Write Chrome Trace / Perfetto JSON timeline to FILE\n  \
            --hash        Use SHA-256 cryptographic content hashes instead of timestamps\n  \
            --cache       Enable content-addressable artifact caching\n  \
-           --cache-dir=D Set cache directory (default .makeyd_cache)\n  \
+           --cache-dir=D Set cache directory (default .maked_cache)\n  \
            --emit-ninja[=F] Transpile Makefile to Ninja build file (default build.ninja)\n  \
            --emit-compdb[=F] Generate Clang JSON Compilation Database (default compile_commands.json)\n  \
            --worker-listen=A Start remote build worker daemon on TCP address A (loopback only;\n  \
-                         needs MAKEYD_WORKER_TOKEN_FILE or MAKEYD_WORKER_TOKEN)\n  \
+                         needs MAKED_WORKER_TOKEN_FILE or MAKED_WORKER_TOKEN)\n  \
            --worker-allow-remote Let --worker-listen accept non-loopback addresses\n  \
            --remote-workers=W Dispatch compilation tasks across remote worker addresses W\n  \
            --tui         Enable live terminal execution dashboard\n  \
@@ -41,7 +41,7 @@ const MAIN_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 fn main() -> ExitCode {
     std::thread::Builder::new()
-        .name("makeyd".to_string())
+        .name("maked".to_string())
         .stack_size(MAIN_STACK_BYTES)
         .spawn(real_main)
         .expect("failed to spawn main thread")
@@ -50,7 +50,21 @@ fn main() -> ExitCode {
 }
 
 fn real_main() -> ExitCode {
-    let args: Vec<String> = env::args().collect();
+    // Inherited MAKEFLAGS come first so that real arguments override them;
+    // combined short flags (`-sk`) are split.
+    let argv: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = Vec::with_capacity(argv.len() + 8);
+    args.push(argv.first().cloned().unwrap_or_else(|| "maked".to_string()));
+    let inherited = maked::jobserver::makeflags_to_args(&env::var("MAKEFLAGS").unwrap_or_default());
+    for a in inherited.into_iter().chain(argv.into_iter().skip(1)) {
+        let letters = a.strip_prefix('-').filter(|r| !r.starts_with('-'));
+        match letters {
+            Some(r) if r.len() > 1 && r.chars().all(|c| "nsBqtiekwSrR".contains(c)) => {
+                args.extend(r.chars().map(|c| format!("-{c}")));
+            }
+            _ => args.push(a),
+        }
+    }
     let mut makefile_path = "Makefile".to_string();
     let mut target_names: Vec<String> = Vec::new();
     let mut jobs = 1usize;
@@ -86,7 +100,7 @@ fn real_main() -> ExitCode {
             return ExitCode::SUCCESS;
         } else if arg == "-v" || arg == "--version" {
             println!(
-                "makeyd {}\nPOSIX IEEE Std 1003.1 conforming Make with Lean 4 formal semantics",
+                "maked {}\nPOSIX IEEE Std 1003.1 conforming Make with Lean 4 formal semantics",
                 env!("CARGO_PKG_VERSION")
             );
             return ExitCode::SUCCESS;
@@ -203,14 +217,14 @@ fn real_main() -> ExitCode {
     }
 
     if let Some(ref addr) = worker_listen {
-        let auth = match makeyd::distributed::WorkerAuth::from_env() {
+        let auth = match maked::distributed::WorkerAuth::from_env() {
             Ok(a) => a,
             Err(e) => {
                 eprintln!("make: *** {e}. Stop.");
                 return ExitCode::from(2);
             }
         };
-        if let Err(e) = makeyd::distributed::run_worker_daemon(addr, auth, worker_allow_remote) {
+        if let Err(e) = maked::distributed::run_worker_daemon(addr, auth, worker_allow_remote) {
             eprintln!("make: *** worker daemon error on {addr}: {e}. Stop.");
             return ExitCode::from(1);
         }
@@ -218,7 +232,7 @@ fn real_main() -> ExitCode {
     }
 
     if !remote_workers.is_empty() {
-        if let Err(e) = makeyd::distributed::WorkerAuth::from_env() {
+        if let Err(e) = maked::distributed::WorkerAuth::from_env() {
             eprintln!("make: *** --remote-workers: {e}. Stop.");
             return ExitCode::from(2);
         }
@@ -229,6 +243,29 @@ fn real_main() -> ExitCode {
             eprintln!("make: *** chdir to '{dir}' failed: {e}. Stop.");
             return ExitCode::from(2);
         }
+    }
+
+    // What sub-makes inherit through MAKEFLAGS (GNU layout).
+    {
+        let mut letters = String::new();
+        for (on, c) in [
+            (always_make, 'B'),
+            (env_overrides, 'e'),
+            (ignore_errors, 'i'),
+            (dry_run, 'n'),
+            (question, 'q'),
+            (silent, 's'),
+            (touch_only, 't'),
+        ] {
+            if on {
+                letters.push(c);
+            }
+        }
+        let vars = cli_vars
+            .iter()
+            .map(|(k, v)| maked::jobserver::escape_makeflags_word(&format!("{k}={v}")))
+            .collect();
+        maked::jobserver::set_makeflags_base(letters, vars);
     }
 
     if env_overrides {
@@ -261,8 +298,8 @@ fn real_main() -> ExitCode {
     let is_ninja = chosen_path
         .to_str()
         .map_or(false, |s| s.ends_with(".ninja"));
-    let makefile = if is_ninja {
-        match makeyd::ninja::parse_ninja_content(&content) {
+    let mut makefile = if is_ninja {
+        match maked::ninja::parse_ninja_content(&content) {
             Ok(mf) => mf,
             Err(e) => {
                 eprintln!("ninja: {e}");
@@ -316,9 +353,127 @@ fn real_main() -> ExitCode {
     // Construct Dependency Graph
     let graph = DependencyGraph::from_makefile(&makefile);
 
+    // GNU make's "How Makefiles Are Remade": bring included makefiles (and
+    // the makefile itself) that have rules up to date first; if any of them
+    // changed or appeared, start over so the new contents are read. This runs
+    // even under -n, as in GNU make.
+    if !is_ninja {
+        let mut candidates: Vec<String> = Vec::new();
+        let main_mf = chosen_path.to_string_lossy().to_string();
+        for f in std::iter::once(main_mf)
+            .chain(makefile.included.iter().cloned())
+            .chain(makefile.missing_includes.iter().map(|(f, _, _)| f.clone()))
+        {
+            let has_rule = makefile
+                .get_rule(&f)
+                .is_some_and(|r| !r.is_phony && (!r.commands.is_empty() || !r.prereqs.is_empty()));
+            if has_rule && !candidates.contains(&f) {
+                candidates.push(f);
+            }
+        }
+        if !candidates.is_empty() {
+            let mtimes = |c: &[String]| -> Vec<Option<std::time::SystemTime>> {
+                c.iter()
+                    .map(|f| fs::metadata(f).and_then(|m| m.modified()).ok())
+                    .collect()
+            };
+            let before = mtimes(&candidates);
+            let remake_config = ExecutionConfig {
+                jobs: 1,
+                dry_run: false,
+                always_make: false,
+                silent,
+                question: false,
+                use_hash: false,
+                ignore_errors,
+                touch_only: false,
+                profile: false,
+                trace_file: None,
+                cache: false,
+                cache_dir: None,
+                remote_workers: Vec::new(),
+                tui: false,
+            };
+            let remaker = Executor::new(&makefile, &graph, remake_config);
+            for f in &candidates {
+                if let Err(e) = remaker.execute(f) {
+                    let optional = makefile
+                        .missing_includes
+                        .iter()
+                        .any(|(m, opt, _)| m == f && *opt);
+                    if !optional {
+                        eprintln!("{e}");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            drop(remaker);
+            if mtimes(&candidates) != before {
+                let restarts: u32 = env::var("MAKE_RESTARTS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                if restarts < 10 {
+                    let argv: Vec<String> = env::args().collect();
+                    let exe = env::current_exe().unwrap_or_else(|_| argv[0].clone().into());
+                    let mut cmd = std::process::Command::new(exe);
+                    cmd.args(&argv[1..])
+                        .env("MAKE_RESTARTS", (restarts + 1).to_string());
+                    if let Some(ref dir) = chdir {
+                        // Already changed directory; do not apply -C twice.
+                        let _ = dir;
+                        let mut filtered = Vec::new();
+                        let mut skip = false;
+                        for a in &argv[1..] {
+                            if skip {
+                                skip = false;
+                                continue;
+                            }
+                            if a == "-C" {
+                                skip = true;
+                                continue;
+                            }
+                            if a.starts_with("-C") || a.starts_with("--directory") {
+                                continue;
+                            }
+                            filtered.push(a.clone());
+                        }
+                        cmd = std::process::Command::new(
+                            env::current_exe().unwrap_or_else(|_| argv[0].clone().into()),
+                        );
+                        cmd.args(&filtered)
+                            .env("MAKE_RESTARTS", (restarts + 1).to_string());
+                    }
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::CommandExt;
+                        let err = cmd.exec();
+                        eprintln!(
+                            "make: *** cannot restart after remaking makefiles: {err}. Stop."
+                        );
+                        return ExitCode::from(2);
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        return match cmd.status() {
+                            Ok(st) => ExitCode::from(st.code().unwrap_or(2) as u8),
+                            Err(_) => ExitCode::from(2),
+                        };
+                    }
+                }
+            }
+        }
+    }
+    for (inc, optional, line) in &makefile.missing_includes {
+        if !*optional && !Path::new(inc).exists() {
+            eprintln!("{makefile_path}:{line}: {inc}: No such file or directory");
+            return ExitCode::from(2);
+        }
+    }
+
     if let Some(ref ninja_out) = emit_ninja {
         let default_goal = targets_to_build.first().map(|s| s.as_str());
-        let ninja_text = makeyd::ninja::emit_ninja(&makefile, &graph, default_goal);
+        let ninja_text = maked::ninja::emit_ninja(&makefile, &graph, default_goal);
         if let Err(e) = fs::write(ninja_out, ninja_text) {
             eprintln!("make: *** Error writing '{ninja_out}': {e}. Stop.");
             return ExitCode::from(2);
@@ -328,8 +483,8 @@ fn real_main() -> ExitCode {
     }
 
     if let Some(ref compdb_out) = emit_compdb {
-        let entries = makeyd::compdb::generate_compilation_database(&makefile, &graph, None);
-        let compdb_json = makeyd::compdb::emit_compdb_json(&entries);
+        let entries = maked::compdb::generate_compilation_database(&makefile, &graph, None);
+        let compdb_json = maked::compdb::emit_compdb_json(&entries);
         if let Err(e) = fs::write(compdb_out, compdb_json) {
             eprintln!("make: *** Error writing '{compdb_out}': {e}. Stop.");
             return ExitCode::from(2);
@@ -353,7 +508,7 @@ fn real_main() -> ExitCode {
     // not argv; without this it would schedule at -j1 under a -jN parent.
     if !jobs_explicit {
         let mf = env::var("MAKEFLAGS").unwrap_or_default();
-        if let Some(n) = makeyd::jobserver::inherited_jobs(&mf) {
+        if let Some(n) = maked::jobserver::inherited_jobs(&mf) {
             jobs = n;
         }
     }
@@ -376,19 +531,51 @@ fn real_main() -> ExitCode {
     };
 
     let jobserver =
-        match makeyd::jobserver::JobServer::detect_or_create(jobs, jobserver_auth.as_deref()) {
+        match maked::jobserver::JobServer::detect_or_create(jobs, jobserver_auth.as_deref()) {
             Ok(js) => std::sync::Arc::new(js),
             Err(e) => {
                 eprintln!("make: [WARNING] failed to initialize jobserver: {e}");
-                std::sync::Arc::new(
-                    makeyd::jobserver::JobServer::detect_or_create(1, None).unwrap(),
-                )
+                std::sync::Arc::new(maked::jobserver::JobServer::detect_or_create(1, None).unwrap())
             }
         };
 
+    // Several goals are built in one run, so a prerequisite they share is
+    // made once (GNU make does the same); a hidden phony root lists them in
+    // command-line order.
+    const GOALS_ROOT: &str = ".MAKED_GOALS";
+    // A goal named twice is built once; the repeat reports "up to date".
+    let mut unique_goals: Vec<String> = Vec::new();
+    let mut repeated_goals: Vec<String> = Vec::new();
+    for g in &targets_to_build {
+        if unique_goals.contains(g) {
+            repeated_goals.push(g.clone());
+        } else {
+            unique_goals.push(g.clone());
+        }
+    }
+    let run_targets: Vec<String> = if unique_goals.len() > 1 {
+        makefile.rules.insert(
+            GOALS_ROOT.to_string(),
+            maked::ast::Rule {
+                target: GOALS_ROOT.to_string(),
+                prereqs: unique_goals.clone(),
+                commands: Vec::new(),
+                is_phony: true,
+                line_number: 0,
+            },
+        );
+        vec![GOALS_ROOT.to_string()]
+    } else {
+        unique_goals.clone()
+    };
+    let prog = Path::new(&args[0])
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "maked".to_string());
+
     let executor = Executor::with_jobserver(&makefile, &graph, config, jobserver);
 
-    for tgt in &targets_to_build {
+    for tgt in &run_targets {
         match executor.execute(tgt) {
             Ok(stats) => {
                 if question {
@@ -397,13 +584,28 @@ fn real_main() -> ExitCode {
                     }
                 }
 
-                if stats.targets_rebuilt == 0 && !silent {
-                    println!("make: '{tgt}' is up to date.");
+                // GNU make's messages when no recipe ran for a goal.
+                let quiet_goals: &[String] = if stats.commands_executed == 0 {
+                    &targets_to_build
+                } else {
+                    &repeated_goals
+                };
+                if !silent && !question {
+                    for goal in quiet_goals {
+                        let has_recipe = makefile
+                            .get_rule(goal)
+                            .is_some_and(|r| !r.commands.is_empty());
+                        if has_recipe {
+                            println!("{prog}: '{goal}' is up to date.");
+                        } else {
+                            println!("{prog}: Nothing to be done for '{goal}'.");
+                        }
+                    }
                 }
 
                 if profile {
                     println!("--------------------------------------------------");
-                    println!("makeyd Execution Profile:");
+                    println!("maked Execution Profile:");
                     println!("  Target:               {tgt}");
                     println!("  Concurrency (-j):     {jobs}");
                     println!("  Targets evaluated:    {}", stats.total_evaluated);
@@ -449,7 +651,8 @@ fn real_main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("{e}");
-                return ExitCode::from(1);
+                // GNU make exits 2 when a build fails.
+                return ExitCode::from(2);
             }
         }
     }

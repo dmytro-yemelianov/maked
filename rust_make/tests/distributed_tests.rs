@@ -6,8 +6,8 @@ use std::thread;
 
 const TOKEN: &str = "test-token-0123456789abcdef";
 
-fn auth() -> makeyd::distributed::WorkerAuth {
-    makeyd::distributed::WorkerAuth::new(TOKEN.as_bytes()).unwrap()
+fn auth() -> maked::distributed::WorkerAuth {
+    maked::distributed::WorkerAuth::new(TOKEN.as_bytes()).unwrap()
 }
 
 fn spawn_daemon() -> String {
@@ -15,9 +15,18 @@ fn spawn_daemon() -> String {
     let addr = format!("127.0.0.1:{port}");
     let a = addr.clone();
     thread::spawn(move || {
-        let _ = makeyd::distributed::run_worker_daemon(&a, auth(), false);
+        let _ = maked::distributed::run_worker_daemon(&a, auth(), false);
     });
-    thread::sleep(std::time::Duration::from_millis(100));
+    // Wait until the daemon accepts connections (a fixed sleep is flaky
+    // when the whole suite runs in parallel).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while TcpStream::connect(&addr).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "worker daemon did not start"
+        );
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
     addr
 }
 
@@ -27,16 +36,16 @@ fn raw_request(addr: &str, token: &str, body: &[u8]) -> String {
     let mut r = BufReader::new(s.try_clone().unwrap());
     let mut greeting = String::new();
     r.read_line(&mut greeting).unwrap();
-    let nonce_hex = greeting.trim().strip_prefix("MAKEYD_DIST_V2 ").unwrap();
+    let nonce_hex = greeting.trim().strip_prefix("MAKED_DIST_V2 ").unwrap();
     let nonce: Vec<u8> = (0..nonce_hex.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&nonce_hex[i..i + 2], 16).unwrap())
         .collect();
     let mut msg = b"req".to_vec();
     msg.extend_from_slice(&nonce);
-    msg.extend_from_slice(&makeyd::hash::sha256_bytes(body));
-    let mac = makeyd::distributed::hmac_sha256(token.as_bytes(), &msg);
-    writeln!(s, "AUTH {} {}", makeyd::hash::to_hex(&mac), body.len()).unwrap();
+    msg.extend_from_slice(&maked::hash::sha256_bytes(body));
+    let mac = maked::distributed::hmac_sha256(token.as_bytes(), &msg);
+    writeln!(s, "AUTH {} {}", maked::hash::to_hex(&mac), body.len()).unwrap();
     s.write_all(body).unwrap();
     s.flush().unwrap();
     let mut reply = String::new();
@@ -54,7 +63,7 @@ fn test_distributed_remote_worker_execution() {
     // 1. Spawn worker daemon in background thread
     let addr = spawn_daemon();
 
-    let temp_dir = std::env::temp_dir().join(format!("makeyd_test_dist_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!("maked_test_dist_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
@@ -70,21 +79,21 @@ final_output.txt: input_a.txt input_b.txt
     fs::write(temp_dir.join("input_a.txt"), "DISTRIBUTED_").unwrap();
     fs::write(temp_dir.join("input_b.txt"), "BUILD_SUCCESS\n").unwrap();
 
-    let makeyd_bin = env!("CARGO_BIN_EXE_makeyd");
+    let maked_bin = env!("CARGO_BIN_EXE_maked");
 
-    // 2. Run makeyd targeting remote worker
-    let out = Command::new(makeyd_bin)
+    // 2. Run maked targeting remote worker
+    let out = Command::new(maked_bin)
         .arg("-f")
         .arg(&makefile_path)
         .arg(format!("--remote-workers={addr}"))
-        .env("MAKEYD_WORKER_TOKEN", TOKEN)
+        .env("MAKED_WORKER_TOKEN", TOKEN)
         .current_dir(&temp_dir)
         .output()
         .unwrap();
 
     assert!(
         out.status.success(),
-        "makeyd distributed build failed: {}",
+        "maked distributed build failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
@@ -105,7 +114,7 @@ fn test_distributed_fallback_to_local_when_worker_unreachable() {
     let bad_addr = format!("127.0.0.1:{unused_port}");
 
     let temp_dir =
-        std::env::temp_dir().join(format!("makeyd_test_dist_fallback_{}", std::process::id()));
+        std::env::temp_dir().join(format!("maked_test_dist_fallback_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
 
@@ -118,21 +127,21 @@ fallback.txt:
     let makefile_path = temp_dir.join("Makefile");
     fs::write(&makefile_path, makefile_content).unwrap();
 
-    let makeyd_bin = env!("CARGO_BIN_EXE_makeyd");
+    let maked_bin = env!("CARGO_BIN_EXE_maked");
 
     // Run with bad worker address: must transparently fall back to local thread
-    let out = Command::new(makeyd_bin)
+    let out = Command::new(maked_bin)
         .arg("-f")
         .arg(&makefile_path)
         .arg(format!("--remote-workers={bad_addr}"))
-        .env("MAKEYD_WORKER_TOKEN", TOKEN)
+        .env("MAKED_WORKER_TOKEN", TOKEN)
         .current_dir(&temp_dir)
         .output()
         .unwrap();
 
     assert!(
         out.status.success(),
-        "makeyd failed fallback: {}",
+        "maked failed fallback: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
@@ -147,7 +156,7 @@ fallback.txt:
 #[test]
 fn test_worker_runs_nothing_without_the_token() {
     let addr = spawn_daemon();
-    let marker = std::env::temp_dir().join(format!("makeyd_marker_{}", std::process::id()));
+    let marker = std::env::temp_dir().join(format!("maked_marker_{}", std::process::id()));
     let _ = fs::remove_file(&marker);
     let body = format!("out\n1\ntouch {}\n0\n", marker.display());
 
@@ -186,18 +195,18 @@ fn test_worker_rejects_paths_outside_its_sandbox() {
 
 #[test]
 fn test_worker_and_coordinator_require_a_token_and_loopback() {
-    let bin = env!("CARGO_BIN_EXE_makeyd");
+    let bin = env!("CARGO_BIN_EXE_maked");
     let out = Command::new(bin)
         .arg("--worker-listen=127.0.0.1:0")
-        .env_remove("MAKEYD_WORKER_TOKEN")
-        .env_remove("MAKEYD_WORKER_TOKEN_FILE")
+        .env_remove("MAKED_WORKER_TOKEN")
+        .env_remove("MAKED_WORKER_TOKEN_FILE")
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2), "daemon started without a token");
 
     let out = Command::new(bin)
         .arg("--worker-listen=0.0.0.0:0")
-        .env("MAKEYD_WORKER_TOKEN", TOKEN)
+        .env("MAKED_WORKER_TOKEN", TOKEN)
         .output()
         .unwrap();
     assert!(
@@ -206,15 +215,15 @@ fn test_worker_and_coordinator_require_a_token_and_loopback() {
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("non-loopback"));
 
-    let dir = std::env::temp_dir().join(format!("makeyd_rw_notoken_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("maked_rw_notoken_{}", std::process::id()));
     let _ = fs::create_dir_all(&dir);
     fs::write(dir.join("Makefile"), "all:\n\t@true\n").unwrap();
     let out = Command::new(bin)
         .arg("-C")
         .arg(&dir)
         .arg("--remote-workers=127.0.0.1:9")
-        .env_remove("MAKEYD_WORKER_TOKEN")
-        .env_remove("MAKEYD_WORKER_TOKEN_FILE")
+        .env_remove("MAKED_WORKER_TOKEN")
+        .env_remove("MAKED_WORKER_TOKEN_FILE")
         .output()
         .unwrap();
     assert_eq!(
@@ -230,17 +239,17 @@ fn test_worker_and_coordinator_require_a_token_and_loopback() {
 #[test]
 fn test_recipe_runs_in_worker_sandbox() {
     let addr = spawn_daemon();
-    let dir = std::env::temp_dir().join(format!("makeyd_where_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("maked_where_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("Makefile"), "where.txt:\n\tpwd > where.txt\n").unwrap();
-    let bin = env!("CARGO_BIN_EXE_makeyd");
+    let bin = env!("CARGO_BIN_EXE_maked");
     let out = Command::new(bin)
         .arg("-C")
         .arg(&dir)
         .arg(format!("--remote-workers={addr}"))
         .arg("where.txt")
-        .env("MAKEYD_WORKER_TOKEN", TOKEN)
+        .env("MAKED_WORKER_TOKEN", TOKEN)
         .output()
         .unwrap();
     assert!(
@@ -250,7 +259,7 @@ fn test_recipe_runs_in_worker_sandbox() {
     );
     let where_ = fs::read_to_string(dir.join("where.txt")).unwrap();
     assert!(
-        where_.contains("makeyd_worker_"),
+        where_.contains("maked_worker_"),
         "ran locally, not on the worker: {where_}"
     );
 
@@ -262,13 +271,13 @@ fn test_recipe_runs_in_worker_sandbox() {
         .arg(&dir)
         .arg(format!("--remote-workers={addr}"))
         .arg("where.txt")
-        .env("MAKEYD_WORKER_TOKEN", "some-other-token-0123456789")
+        .env("MAKED_WORKER_TOKEN", "some-other-token-0123456789")
         .output()
         .unwrap();
     assert!(out.status.success());
     let where_ = fs::read_to_string(dir.join("where.txt")).unwrap();
     assert!(
-        !where_.contains("makeyd_worker_"),
+        !where_.contains("maked_worker_"),
         "worker accepted a foreign token"
     );
     let _ = fs::remove_dir_all(&dir);

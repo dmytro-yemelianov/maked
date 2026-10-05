@@ -4,7 +4,7 @@
 //! protocol is built around not letting anyone else do that:
 //!
 //! - **Authentication.** Both sides hold a shared token, read from the file
-//!   named by `MAKEYD_WORKER_TOKEN_FILE` or from `MAKEYD_WORKER_TOKEN`, never
+//!   named by `MAKED_WORKER_TOKEN_FILE` or from `MAKED_WORKER_TOKEN`, never
 //!   from argv, where `ps` would show it. On connect the worker sends a fresh
 //!   random nonce. The request carries HMAC-SHA256(token, "req" ‖ nonce ‖
 //!   body), and the response carries HMAC-SHA256(token, "resp" ‖ nonce ‖
@@ -31,12 +31,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-pub const MAGIC_PROTOCOL: &str = "MAKEYD_DIST_V2";
+pub const MAGIC_PROTOCOL: &str = "MAKED_DIST_V2";
 pub const MAX_MESSAGE_BYTES: usize = 256 * 1024 * 1024;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 pub const MIN_TOKEN_BYTES: usize = 16;
-pub const TOKEN_ENV: &str = "MAKEYD_WORKER_TOKEN";
-pub const TOKEN_FILE_ENV: &str = "MAKEYD_WORKER_TOKEN_FILE";
+pub const TOKEN_ENV: &str = "MAKED_WORKER_TOKEN";
+pub const TOKEN_FILE_ENV: &str = "MAKED_WORKER_TOKEN_FILE";
 
 #[derive(Debug, Clone)]
 pub struct RemoteBuildResult {
@@ -70,7 +70,7 @@ impl WorkerAuth {
         })
     }
 
-    /// Token from `MAKEYD_WORKER_TOKEN_FILE` (preferred) or `MAKEYD_WORKER_TOKEN`.
+    /// Token from `MAKED_WORKER_TOKEN_FILE` (preferred) or `MAKED_WORKER_TOKEN`.
     pub fn from_env() -> Result<Self, String> {
         if let Ok(path) = std::env::var(TOKEN_FILE_ENV) {
             let text = fs::read_to_string(&path)
@@ -186,7 +186,7 @@ pub fn run_worker_daemon(
     let addrs = check_listen_addr(listen_addr, allow_remote)?;
     let listener = TcpListener::bind(&addrs[..])?;
     println!(
-        "makeyd worker daemon listening on {} (token required)",
+        "maked worker daemon listening on {} (token required)",
         listener.local_addr()?
     );
     let auth = Arc::new(auth);
@@ -196,11 +196,11 @@ pub fn run_worker_daemon(
                 let auth = Arc::clone(&auth);
                 std::thread::spawn(move || {
                     if let Err(e) = handle_worker_connection(stream, &auth) {
-                        eprintln!("makeyd worker: rejected connection: {e}");
+                        eprintln!("maked worker: rejected connection: {e}");
                     }
                 });
             }
-            Err(e) => eprintln!("makeyd worker connection accept error: {e}"),
+            Err(e) => eprintln!("maked worker connection accept error: {e}"),
         }
     }
     Ok(())
@@ -305,7 +305,7 @@ fn handle_worker_connection(mut stream: TcpStream, auth: &WorkerAuth) -> std::io
     // A fresh sandbox per connection; create_dir fails rather than reuse one.
     let seq = SANDBOX_SEQ.fetch_add(1, Ordering::Relaxed);
     let sandbox_dir = std::env::temp_dir().join(format!(
-        "makeyd_worker_{}_{}_{}",
+        "maked_worker_{}_{}_{}",
         std::process::id(),
         seq,
         &to_hex(&nonce)[..12]

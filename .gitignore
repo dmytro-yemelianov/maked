@@ -4,11 +4,11 @@
 /c_make/bin/
 *.o
 *.a
-.makeyd.db
-.makeyd_cache/
+.maked.db
+.maked_cache/
 /benchmarks/lua_test/lua-5.4.9/src/lua
 /benchmarks/lua_test/lua-5.4.9/src/luac
 /benchmarks/lua_test/lua-5.4.9/src/compile_commands.json
 /benchmarks/lua_test/lua-5.4.9/src/build.ninja
 /benchmarks/lua_test/lua-5.4.9.tar.gz
-.makeyd_log
+.maked_log

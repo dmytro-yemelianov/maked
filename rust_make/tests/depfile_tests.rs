@@ -2,19 +2,19 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::process::Command;
 
-fn get_makeyd_bin() -> String {
+fn get_maked_bin() -> String {
     let mut path = std::env::current_exe().unwrap();
     path.pop(); // drop test binary name
     if path.ends_with("deps") {
         path.pop();
     }
-    path.push("makeyd");
+    path.push("maked");
     path.to_str().unwrap().to_string()
 }
 
 #[test]
 fn test_c_depfile_dynamic_header_dependency_injection() {
-    let makeyd = get_makeyd_bin();
+    let maked = get_maked_bin();
     let temp_dir = std::env::temp_dir().join(format!("test_depfile_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -55,11 +55,11 @@ fn test_c_depfile_dynamic_header_dependency_injection() {
     drop(mf);
 
     // 1. Initial cold build: main.o and prog should be compiled and linked
-    let out1 = Command::new(&makeyd)
+    let out1 = Command::new(&maked)
         .arg("-C")
         .arg(&temp_dir)
         .output()
-        .expect("failed to run makeyd");
+        .expect("failed to run maked");
     assert!(out1.status.success());
     let stdout1 = String::from_utf8_lossy(&out1.stdout);
     assert!(stdout1.contains("COMPILE main.c"));
@@ -70,16 +70,17 @@ fn test_c_depfile_dynamic_header_dependency_injection() {
     );
 
     // 2. Second build without changes: must be up to date!
-    let out2 = Command::new(&makeyd)
+    let out2 = Command::new(&maked)
         .arg("-C")
         .arg(&temp_dir)
         .output()
-        .expect("failed to run makeyd");
+        .expect("failed to run maked");
     assert!(out2.status.success());
     let stdout2 = String::from_utf8_lossy(&out2.stdout);
+    // `all` has no recipe, so GNU make's wording is "Nothing to be done".
     assert!(
-        stdout2.contains("is up to date"),
-        "expected up to date, got: {stdout2}"
+        stdout2.contains("Nothing to be done for 'all'"),
+        "expected nothing to be done, got: {stdout2}"
     );
 
     // 3. Touch foo.h (which is only listed in main.d, not in the explicit Makefile prerequisites!)
@@ -89,11 +90,11 @@ fn test_c_depfile_dynamic_header_dependency_injection() {
     f_foo.write_all(b"#define FOO 42\n").unwrap();
     drop(f_foo);
 
-    let out3 = Command::new(&makeyd)
+    let out3 = Command::new(&maked)
         .arg("-C")
         .arg(&temp_dir)
         .output()
-        .expect("failed to run makeyd");
+        .expect("failed to run maked");
     assert!(out3.status.success());
     let stdout3 = String::from_utf8_lossy(&out3.stdout);
     assert!(
@@ -111,11 +112,11 @@ fn test_c_depfile_dynamic_header_dependency_injection() {
     f_bar.write_all(b"#define BAR 99\n").unwrap();
     drop(f_bar);
 
-    let out4 = Command::new(&makeyd)
+    let out4 = Command::new(&maked)
         .arg("-C")
         .arg(&temp_dir)
         .output()
-        .expect("failed to run makeyd");
+        .expect("failed to run maked");
     assert!(out4.status.success());
     let stdout4 = String::from_utf8_lossy(&out4.stdout);
     assert!(
@@ -128,15 +129,15 @@ fn test_c_depfile_dynamic_header_dependency_injection() {
     );
 
     // 5. Subsequent run: up to date again!
-    let out5 = Command::new(&makeyd)
+    let out5 = Command::new(&maked)
         .arg("-C")
         .arg(&temp_dir)
         .output()
-        .expect("failed to run makeyd");
+        .expect("failed to run maked");
     assert!(out5.status.success());
     let stdout5 = String::from_utf8_lossy(&out5.stdout);
     assert!(
-        stdout5.contains("is up to date"),
+        stdout5.contains("Nothing to be done for 'all'"),
         "expected up to date, got: {stdout5}"
     );
 
@@ -145,7 +146,7 @@ fn test_c_depfile_dynamic_header_dependency_injection() {
 
 #[test]
 fn test_wildcard_include_pattern() {
-    let makeyd = get_makeyd_bin();
+    let maked = get_maked_bin();
     let temp_dir = std::env::temp_dir().join(format!("test_wildcard_inc_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).unwrap();
@@ -168,11 +169,11 @@ fn test_wildcard_include_pattern() {
     writeln!(mf, "\t@echo $(VAR1)_$(VAR2)").unwrap();
     drop(mf);
 
-    let out = Command::new(&makeyd)
+    let out = Command::new(&maked)
         .arg("-C")
         .arg(&temp_dir)
         .output()
-        .expect("failed to run makeyd");
+        .expect("failed to run maked");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(

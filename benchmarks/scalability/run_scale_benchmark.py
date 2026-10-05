@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Comprehensive Scalability & Stress Benchmark Runner:
-Compares makeyd (Rust), GNU Make 4.4.1 (gmake), and Ninja
+Compares maked (Rust), GNU Make 4.4.1 (gmake), and Ninja
 across massive DAGs (1k to 10k nodes) measuring:
   1. Null-build / Up-to-date traversal latency
   2. Parse & Dry-Run (-n) latency
@@ -19,7 +19,7 @@ import shutil
 import tempfile
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MAKEYD_BIN = os.path.join(ROOT_DIR, "rust_make", "target", "release", "makeyd")
+MAKED_BIN = os.path.join(ROOT_DIR, "rust_make", "target", "release", "maked")
 GMAKE_BIN = "/opt/homebrew/bin/gmake"
 NINJA_BIN = "/opt/homebrew/bin/ninja"
 
@@ -68,16 +68,16 @@ def run_hyperfine(cmds, cwd, runs=10):
 
 def main():
     print("=" * 70)
-    print("Mega-Project Scalability & Stress Benchmark: makeyd vs gmake vs ninja")
+    print("Mega-Project Scalability & Stress Benchmark: maked vs gmake vs ninja")
     print("=" * 70)
 
-    # Ensure makeyd is built in release mode
+    # Ensure maked is built in release mode
     subprocess.run(["cargo", "build", "--release", "--manifest-path", os.path.join(ROOT_DIR, "rust_make", "Cargo.toml")], check=True)
 
     benchmark_results = {
         "environment": {
             "os": "macOS (Apple Silicon arm64)",
-            "makeyd": "v0.1.0 (Zero-Dependency Rust)",
+            "maked": "v0.1.0 (Zero-Dependency Rust)",
             "gmake": "GNU Make 4.4.1",
             "ninja": "1.12.1",
         },
@@ -93,7 +93,7 @@ def main():
 
     for label, topo, size in test_sizes:
         print(f"\n--- Scenario: {label} ({size} nodes) ---")
-        tmp_dir = tempfile.mkdtemp(prefix=f"makeyd_scale_{label}_")
+        tmp_dir = tempfile.mkdtemp(prefix=f"maked_scale_{label}_")
         gen_script = os.path.join(ROOT_DIR, "benchmarks", "scalability", "generate_massive_dag.py")
 
         # 1. Generate DAG
@@ -110,9 +110,9 @@ def main():
 
         # 2. Benchmark Cold Build & Measure Peak RSS
         print("  [*] Performing cold initial build...")
-        makeyd_cold = measure_peak_rss_and_time([MAKEYD_BIN, "-j", "8"], tmp_dir)
-        scenario_res["peak_rss"]["makeyd"] = makeyd_cold["peak_rss_kb"]
-        scenario_res["cold_build_time_sec"] = makeyd_cold["elapsed_sec"]
+        maked_cold = measure_peak_rss_and_time([MAKED_BIN, "-j", "8"], tmp_dir)
+        scenario_res["peak_rss"]["maked"] = maked_cold["peak_rss_kb"]
+        scenario_res["cold_build_time_sec"] = maked_cold["elapsed_sec"]
 
         # Clean for gmake comparison
         subprocess.run([GMAKE_BIN, "clean"], cwd=tmp_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -120,12 +120,12 @@ def main():
         scenario_res["peak_rss"]["gmake"] = gmake_cold["peak_rss_kb"]
 
         # Rebuild app to up-to-date state
-        subprocess.run([MAKEYD_BIN, "-j", "8"], cwd=tmp_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([MAKED_BIN, "-j", "8"], cwd=tmp_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         # 3. Benchmark Null-Build (Idempotency traversal)
         print("  [*] Benchmarking Null-Build traversal (Hyperfine)...")
         hf_null = run_hyperfine([
-            ("makeyd", f"{MAKEYD_BIN} -j 8"),
+            ("maked", f"{MAKED_BIN} -j 8"),
             ("gmake", f"{GMAKE_BIN} -j 8"),
             ("ninja", f"{NINJA_BIN} -j 8"),
         ], cwd=tmp_dir, runs=15)
@@ -143,7 +143,7 @@ def main():
         # 4. Benchmark Dry-Run (-n)
         print("  [*] Benchmarking Dry-Run (-n) parse & plan speed...")
         hf_dry = run_hyperfine([
-            ("makeyd -n", f"{MAKEYD_BIN} -n"),
+            ("maked -n", f"{MAKED_BIN} -n"),
             ("gmake -n", f"{GMAKE_BIN} -n"),
             ("ninja -n", f"{NINJA_BIN} -n"),
         ], cwd=tmp_dir, runs=10)
@@ -154,16 +154,16 @@ def main():
                     "mean_ms": round(r["mean"] * 1000.0, 2),
                 }
 
-        # 5. Measure Parallel Thread Scaling on makeyd (-j 1, 4, 8, 16)
-        print("  [*] Benchmarking makeyd Parallel Scaling...")
+        # 5. Measure Parallel Thread Scaling on maked (-j 1, 4, 8, 16)
+        print("  [*] Benchmarking maked Parallel Scaling...")
         for j in [1, 4, 8, 16]:
             subprocess.run([GMAKE_BIN, "clean"], cwd=tmp_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            t_res = measure_peak_rss_and_time([MAKEYD_BIN, f"-j{j}"], tmp_dir)
+            t_res = measure_peak_rss_and_time([MAKED_BIN, f"-j{j}"], tmp_dir)
             scenario_res["parallel_build_scaling"][f"-j{j}"] = {
                 "elapsed_sec": round(t_res["elapsed_sec"], 3),
                 "peak_rss_kb": t_res["peak_rss_kb"],
             }
-            print(f"      - makeyd -j{j:<2}: {t_res['elapsed_sec']:6.3f}s (RSS: {t_res['peak_rss_kb']/1024.0:4.1f} MB)")
+            print(f"      - maked -j{j:<2}: {t_res['elapsed_sec']:6.3f}s (RSS: {t_res['peak_rss_kb']/1024.0:4.1f} MB)")
 
         benchmark_results["scenarios"][label] = scenario_res
         shutil.rmtree(tmp_dir)

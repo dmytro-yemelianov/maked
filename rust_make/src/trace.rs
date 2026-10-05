@@ -292,7 +292,7 @@ mod tests {
         let collector = TraceCollector::new();
         let pid = 100;
 
-        collector.record_metadata("process_name", pid, 0, "name", "makeyd");
+        collector.record_metadata("process_name", pid, 0, "name", "maked");
         collector.record_metadata("thread_name", pid, 1, "name", "Worker 1");
 
         // Record target 'a' (leaf): dur 10ms (10000us)

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 /// path, even before any duration history exists (hop count).
 #[test]
 fn test_ready_queue_prefers_longest_remaining_path() {
-    let dir = std::env::temp_dir().join(format!("makeyd_priority_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("maked_priority_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let mut mf = String::from(".PHONY: all\nall: c3 s1 s2 s3 s4 s5 s6\n");
@@ -21,7 +21,7 @@ fn test_ready_queue_prefers_longest_remaining_path() {
     }
     fs::write(dir.join("Makefile"), mf).unwrap();
 
-    let bin = env!("CARGO_BIN_EXE_makeyd");
+    let bin = env!("CARGO_BIN_EXE_maked");
     let trace = dir.join("trace.json");
     for round in 0..3 {
         for t in ["c1", "c2", "c3", "s1", "s2", "s3", "s4", "s5", "s6"] {
@@ -67,7 +67,7 @@ fn test_ready_queue_prefers_longest_remaining_path() {
             "round {round}: {elapsed:?}"
         );
     }
-    assert!(dir.join(".makeyd_log").exists(), "duration log not written");
+    assert!(dir.join(".maked_log").exists(), "duration log not written");
     let _ = fs::remove_dir_all(&dir);
 }
 

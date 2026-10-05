@@ -37,6 +37,67 @@ pub struct Makefile {
     pub target_variables: HashMap<String, HashMap<String, String>>,
     pub has_second_expansion: bool,
     pub eval_queue: Arc<Mutex<Vec<String>>>,
+    /// `export NAME` (true) / `unexport NAME` (false).
+    pub exported: HashMap<String, bool>,
+    /// A bare `export` line: export every variable.
+    pub export_all: bool,
+    /// `$*` for targets of static pattern rules.
+    pub static_stems: HashMap<String, String>,
+    /// Order-only prerequisites per target (`target: normal | order-only`).
+    pub order_only: HashMap<String, Vec<String>>,
+    /// Built-in variables still at their default value.
+    pub defaults: HashSet<String>,
+    /// Makefiles read through `include` (as written).
+    pub included: Vec<String>,
+    /// `include`d files that did not exist: (name, optional, line).
+    pub missing_includes: Vec<(String, bool, usize)>,
+}
+
+// `$(eval NAME := value)` met while expanding recipes: the makefile is
+// shared and immutable during a build, so such assignments go to a per-thread
+// overlay that `get_var` consults first. That is enough for GNU idioms like
+// git's self-memoizing `X = $(eval X := $$(shell ...))$(X)`.
+static EXECUTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+thread_local! {
+    static RUNTIME_VARS: std::cell::RefCell<HashMap<String, String>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Called when the build starts: from now on `$(eval)` assignments apply at once.
+pub fn enter_execution_phase() {
+    EXECUTING.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn in_execution_phase() -> bool {
+    EXECUTING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_runtime_var(key: String, val: String) {
+    RUNTIME_VARS.with(|m| {
+        m.borrow_mut().insert(key, val);
+    });
+}
+
+fn runtime_var(key: &str) -> Option<String> {
+    if !in_execution_phase() {
+        return None;
+    }
+    RUNTIME_VARS.with(|m| m.borrow().get(key).cloned())
+}
+
+/// How recipes are run: the shell and the environment changes GNU make
+/// applies (exported variables, unexported ones removed).
+#[derive(Debug, Clone, Default)]
+pub struct RecipeEnv {
+    pub shell: String,
+    pub set: Vec<(String, String)>,
+    pub unset: Vec<String>,
+}
+
+fn is_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 impl Makefile {
@@ -49,6 +110,13 @@ impl Makefile {
             cli_overrides: HashSet::new(),
             default_target: None,
             vpath_directives: Vec::new(),
+            exported: HashMap::new(),
+            export_all: false,
+            static_stems: HashMap::new(),
+            order_only: HashMap::new(),
+            defaults: HashSet::new(),
+            included: Vec::new(),
+            missing_includes: Vec::new(),
             target_variables: HashMap::new(),
             has_second_expansion: false,
             eval_queue: Arc::new(Mutex::new(Vec::new())),
@@ -58,21 +126,47 @@ impl Makefile {
         let cur_exe = std::env::current_exe()
             .ok()
             .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| "makeyd".to_string());
+            .unwrap_or_else(|| "maked".to_string());
         mf.set_var("MAKE".to_string(), cur_exe);
-        mf.set_var("CC".to_string(), "cc".to_string());
-        mf.set_var("AR".to_string(), "ar".to_string());
-        mf.set_var("ARFLAGS".to_string(), "rv".to_string());
-        mf.set_var("RANLIB".to_string(), "ranlib".to_string());
-        mf.set_var("RM".to_string(), "rm -f".to_string());
+        // GNU make's built-in defaults: the environment overrides them, and
+        // `$(origin)` reports them as "default".
+        for (k, v) in [
+            ("CC", "cc"),
+            ("CXX", "c++"),
+            ("CPP", "$(CC) -E"),
+            ("AR", "ar"),
+            ("ARFLAGS", "rv"),
+            ("AS", "as"),
+            ("RANLIB", "ranlib"),
+            ("RM", "rm -f"),
+            ("LEX", "lex"),
+            ("YACC", "yacc"),
+            ("COMPILE.c", "$(CC) $(CFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c"),
+            (
+                "COMPILE.cc",
+                "$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c",
+            ),
+            ("LINK.o", "$(CC) $(LDFLAGS) $(TARGET_ARCH)"),
+            ("OUTPUT_OPTION", "-o $@"),
+        ] {
+            mf.variables.insert(k.to_string(), v.to_string());
+            mf.defaults.insert(k.to_string());
+        }
 
-        // Built-in implicit pattern rule: %.o: %.c
-        mf.add_pattern_rule(PatternRule {
-            target_pattern: "%.o".to_string(),
-            prereq_patterns: vec!["%.c".to_string()],
-            commands: vec!["$(CC) $(CFLAGS) -c $< -o $@".to_string()],
-            line_number: 0,
-        });
+        // Built-in implicit rules (GNU make's, without match-anything ones).
+        for (tp, pp, cmd) in [
+            ("%.o", "%.c", "$(COMPILE.c) $(OUTPUT_OPTION) $<"),
+            ("%.o", "%.cc", "$(COMPILE.cc) $(OUTPUT_OPTION) $<"),
+            ("%.o", "%.cpp", "$(COMPILE.cc) $(OUTPUT_OPTION) $<"),
+            ("%.o", "%.C", "$(COMPILE.cc) $(OUTPUT_OPTION) $<"),
+        ] {
+            mf.add_pattern_rule(PatternRule {
+                target_pattern: tp.to_string(),
+                prereq_patterns: vec![pp.to_string()],
+                commands: vec![cmd.to_string()],
+                line_number: 0,
+            });
+        }
 
         mf
     }
@@ -116,19 +210,83 @@ impl Makefile {
         idx
     }
 
+    /// `override VAR = value`: set even over a command-line definition.
+    pub fn set_var_override(&mut self, key: String, val: String) {
+        self.defaults.remove(&key);
+        self.variables.insert(key, val);
+    }
+
+    /// Recipe shell and environment, as GNU make builds them. Exported are:
+    /// `export`ed names, everything after a bare `export`, variables from the
+    /// command line, and makefile variables that override one from the
+    /// environment. `unexport`ed names are removed. The shell is the
+    /// makefile's `SHELL`, never `$SHELL` from the environment, else /bin/sh.
+    pub fn recipe_env(&self) -> RecipeEnv {
+        let mut names: Vec<&String> = Vec::new();
+        for (name, _) in &self.variables {
+            let explicit = self.exported.get(name).copied();
+            let export = match explicit {
+                Some(e) => e,
+                None => {
+                    self.export_all
+                        || self.cli_overrides.contains(name)
+                        || std::env::var_os(name).is_some()
+                }
+            };
+            if export && name != "SHELL" && is_env_name(name) {
+                names.push(name);
+            }
+        }
+        names.sort();
+        let set = names
+            .into_iter()
+            .map(|n| {
+                let raw = self.variables.get(n).cloned().unwrap_or_default();
+                (
+                    n.clone(),
+                    crate::parser::expand_variables(&raw, self, None, &[]),
+                )
+            })
+            .collect();
+        let mut unset: Vec<String> = self
+            .exported
+            .iter()
+            .filter(|(_, e)| !**e)
+            .map(|(n, _)| n.clone())
+            .collect();
+        unset.sort();
+        let shell = self
+            .variables
+            .get("SHELL")
+            .map(|v| crate::parser::expand_variables(v, self, None, &[]))
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "/bin/sh".to_string());
+        RecipeEnv { shell, set, unset }
+    }
+
     pub fn set_var(&mut self, key: String, val: String) {
         if self.cli_overrides.contains(&key) {
             return;
         }
+        self.defaults.remove(&key);
         self.variables.insert(key, val);
     }
 
     pub fn set_cli_var(&mut self, key: String, val: String) {
         self.cli_overrides.insert(key.clone());
+        self.defaults.remove(&key);
         self.variables.insert(key, val);
     }
 
     pub fn get_var(&self, key: &str) -> Option<String> {
+        if let Some(val) = runtime_var(key) {
+            return Some(val);
+        }
+        if self.defaults.contains(key) {
+            if let Ok(env_val) = std::env::var(key) {
+                return Some(env_val);
+            }
+        }
         if let Some(val) = self.variables.get(key) {
             return Some(val.clone());
         }
@@ -348,6 +506,21 @@ impl Makefile {
             let mut r_clone = r.clone();
             r_clone.prereqs = self.expand_prerequisites(target, &r.prereqs);
             return Some(r_clone);
+        }
+
+        // `.DEFAULT`: the recipe for targets with no rule and no file.
+        if target != ".DEFAULT" && !target.starts_with('.') && !Path::new(target).exists() {
+            if let Some(d) = self.rules.get(".DEFAULT") {
+                if !d.commands.is_empty() && self.resolve_path(target).is_none() {
+                    return Some(Rule {
+                        target: target.to_string(),
+                        prereqs: Vec::new(),
+                        commands: d.commands.clone(),
+                        is_phony: false,
+                        line_number: d.line_number,
+                    });
+                }
+            }
         }
 
         None
