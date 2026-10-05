@@ -87,9 +87,28 @@ pub fn set_runtime_var(key: String, val: String) {
     });
 }
 
+thread_local! {
+    /// While the makefile is read, `$(eval)` text is queued and parsed after
+    /// the current line; its simple assignments also go here at once, so
+    /// the rest of the line sees them, as in GNU make (where `$(eval)` is
+    /// immediate). Cleared when the queue is applied.
+    static EVAL_PREVIEW: std::cell::RefCell<HashMap<String, String>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+pub fn set_eval_preview(key: String, val: String) {
+    EVAL_PREVIEW.with(|m| {
+        m.borrow_mut().insert(key, val);
+    });
+}
+
+pub fn clear_eval_preview() {
+    EVAL_PREVIEW.with(|m| m.borrow_mut().clear());
+}
+
 fn runtime_var(key: &str) -> Option<String> {
     if !in_execution_phase() {
-        return None;
+        return EVAL_PREVIEW.with(|m| m.borrow().get(key).cloned());
     }
     RUNTIME_VARS.with(|m| m.borrow().get(key).cloned())
 }
@@ -145,6 +164,7 @@ impl Makefile {
             .and_then(|p| p.to_str().map(|s| s.to_string()))
             .unwrap_or_else(|| "maked".to_string());
         mf.set_var("MAKE".to_string(), cur_exe);
+        mf.defaults.insert("MAKE".to_string()); // $(origin MAKE) is default
         // GNU make's built-in defaults: the environment overrides them, and
         // `$(origin)` reports them as "default".
         for (k, v) in [

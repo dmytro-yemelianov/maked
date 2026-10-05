@@ -516,6 +516,43 @@ fn included_makefiles_are_remade_and_reread() {
 }
 
 #[test]
+fn expression_whitespace_and_function_semantics() {
+    // Each line is a GNU make rule maked got wrong until the expression
+    // fuzzer (benchmarks/fuzzer/expr_fuzz.py) compared them.
+    assert_same(
+        &[(
+            "Makefile",
+            "E :=\nSP := $(E) $(E)\nT := a b  \nFN = <$(1)|$(2)>\n\
+             $(info 1[$(T)])\n\
+             $(info 2[$(or $(E),$(SP))][$(if $(SP),yes,no)][$(and $(SP),x)])\n\
+             $(info 3[$(call FN, a , b )])\n\
+             $(info 4[$(subst ,X,ab)][$(subst a,b, x a )])\n\
+             $(info 5[$(eval V := now)$(V)])\n\
+             $(info 6[$(wordlist 1,2,a\tb  c)][$(patsubst %c,%.%,abc)])\n\
+             $(info 7[$(foreach w,$$(E)x,$(w))][$(origin MAKE)])\n\
+             ifdef SP\n$(info 8 sp defined)\nendif\n\
+             ifeq ( $(E),)\n$(info 9 eq)\nelse\n$(info 9 ne)\nendif\n\
+             ifeq ($(E),$(E) )\n$(info 10 eq)\nelse\n$(info 10 ne)\nendif\n\
+             ifeq \"a\" 'a'\n$(info 11 eq)\nendif\n\
+             all: ; @:\n",
+        )],
+        &[],
+    );
+    // A dotfile is not matched by `*`.
+    assert_same(
+        &[
+            (".h.c", ""),
+            ("v.c", ""),
+            (
+                "Makefile",
+                "$(info [$(wildcard *.c)][$(wildcard .*.c)])\nall: ; @:\n",
+            ),
+        ],
+        &[],
+    );
+}
+
+#[test]
 fn recipe_after_semicolon_and_empty_recipes() {
     // `t: p ; recipe`, an `=` after the `;` (recipe text) and before it (a
     // target-specific variable, `;` included); an empty recipe (`b.o: ;`)

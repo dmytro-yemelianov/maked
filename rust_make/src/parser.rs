@@ -188,12 +188,10 @@ fn eval_inner(
 
     // Check scoped variables first
     if let Some(sv) = scoped_vars {
+        // `foreach` and `call` parameters are simple variables in GNU make:
+        // their values were expanded once and are not expanded again.
         if let Some(val) = sv.get(trimmed) {
-            return if val.contains('$') {
-                expand_variables_internal(val, makefile, target, prereqs, scoped_vars, depth)
-            } else {
-                val.clone()
-            };
+            return val.clone();
         }
     }
 
@@ -213,7 +211,7 @@ fn eval_inner(
         {
             v
         } else if let Some(val) = scoped_vars.and_then(|sv| sv.get(&expanded_var_name)) {
-            expand_variables_internal(val, makefile, target, prereqs, scoped_vars, depth)
+            val.clone()
         } else if let Some(val) =
             target.and_then(|t| makefile.get_target_var(t, &expanded_var_name))
         {
@@ -275,8 +273,11 @@ fn eval_inner(
         "let",
     ];
 
+    // GNU make skips whitespace after the function name only; the last
+    // argument keeps its trailing whitespace (`$(subst a,b, x )`).
+    let lead = inner.trim_start();
     for &func in &known_functions {
-        if let Some(remainder) = trimmed.strip_prefix(func) {
+        if let Some(remainder) = lead.strip_prefix(func) {
             if remainder.is_empty() || remainder.starts_with(char::is_whitespace) {
                 let args_raw = remainder.trim_start();
                 return eval_function(
@@ -299,9 +300,11 @@ fn eval_inner(
         inner.to_string()
     };
 
-    let val_opt = scoped_vars
-        .and_then(|sv| sv.get(&var_name).cloned())
-        .or_else(|| target.and_then(|t| makefile.get_target_var(t, &var_name)))
+    if let Some(val) = scoped_vars.and_then(|sv| sv.get(&var_name)) {
+        return val.clone(); // a simple variable (see above)
+    }
+    let val_opt = target
+        .and_then(|t| makefile.get_target_var(t, &var_name))
         .or_else(|| makefile.get_var(&var_name));
 
     if let Some(val) = val_opt {
@@ -351,11 +354,13 @@ fn eval_function(
             if s == 0 || e < s {
                 return String::new();
             }
-            text.split_whitespace()
-                .skip(s - 1)
-                .take(e - s + 1)
-                .collect::<Vec<_>>()
-                .join(" ")
+            // The text from word s to the end of word e, as written (GNU
+            // make keeps the separators in between).
+            let spans: Vec<(usize, usize)> = word_spans(&text).collect();
+            match (spans.get(s - 1), spans.get(e - 1).or(spans.last())) {
+                (Some(&(a, _)), Some(&(_, b))) => text[a..b].to_string(),
+                _ => String::new(),
+            }
         }
         "abspath" | "realpath" => {
             let names = ex(args_raw);
@@ -513,8 +518,9 @@ fn eval_function(
                 };
                 child_scope.insert("0".to_string(), func_name);
                 for (idx, arg) in args.iter().enumerate().skip(1) {
+                    // Arguments are passed as written, spaces included.
                     let val = expand_variables_internal(
-                        arg.trim(),
+                        arg,
                         makefile,
                         target,
                         prereqs,
@@ -541,8 +547,11 @@ fn eval_function(
             if crate::ast::in_execution_phase() {
                 // During the build: apply simple assignments now (see
                 // `set_runtime_var`); anything else cannot change the graph.
-                eval_assignment_at_runtime(&exp, makefile);
+                eval_assignment_at_runtime(&exp, makefile, crate::ast::set_runtime_var);
             } else {
+                // Parsed after this line; the assignments are visible to the
+                // rest of the line already (`set_eval_preview`).
+                eval_assignment_at_runtime(&exp, makefile, crate::ast::set_eval_preview);
                 makefile.push_eval(exp);
             }
             String::new()
@@ -664,7 +673,12 @@ fn eval_function(
                     scoped_vars,
                     depth,
                 );
-                text.replace(&from, &to)
+                if from.is_empty() {
+                    // GNU make: the first match of "" is the end of the text.
+                    text + &to
+                } else {
+                    text.replace(&from, &to)
+                }
             } else {
                 String::new()
             }
@@ -866,6 +880,8 @@ fn eval_function(
         "if" => {
             let args = split_top_level_args(args_raw);
             if !args.is_empty() {
+                // The condition is stripped before it is expanded, so one
+                // that expands to spaces is true (GNU make).
                 let cond = expand_variables_internal(
                     args[0].trim(),
                     makefile,
@@ -874,10 +890,10 @@ fn eval_function(
                     scoped_vars,
                     depth,
                 );
-                if !cond.trim().is_empty() {
+                if !cond.is_empty() {
                     if args.len() > 1 {
                         expand_variables_internal(
-                            args[1].trim(),
+                            args[1],
                             makefile,
                             target,
                             prereqs,
@@ -889,7 +905,7 @@ fn eval_function(
                     }
                 } else if args.len() > 2 {
                     expand_variables_internal(
-                        args[2..].join(",").trim(),
+                        &args[2..].join(","),
                         makefile,
                         target,
                         prereqs,
@@ -914,7 +930,7 @@ fn eval_function(
                     scoped_vars,
                     depth,
                 );
-                if !val.trim().is_empty() {
+                if !val.is_empty() {
                     return val;
                 }
             }
@@ -932,7 +948,7 @@ fn eval_function(
                     scoped_vars,
                     depth,
                 );
-                if val.trim().is_empty() {
+                if val.is_empty() {
                     return String::new();
                 }
                 last = val;
@@ -986,6 +1002,25 @@ fn split_top_level_args(s: &str) -> Vec<&str> {
     args
 }
 
+/// Byte ranges of the whitespace-separated words of `s`.
+fn word_spans(s: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let mut i = 0;
+    let b = s.as_bytes();
+    std::iter::from_fn(move || {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= b.len() {
+            return None;
+        }
+        let start = i;
+        while i < b.len() && !b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        Some((start, i))
+    })
+}
+
 fn find_top_level_char(s: &str, target_ch: char) -> Option<usize> {
     // Fast path: the first occurrence is at top level unless a `(` or `{`
     // opens before it (and a line without the character at all is common).
@@ -1023,6 +1058,7 @@ fn process_pending_evals(
     makefile: &mut Makefile,
     cli_vars: &[(String, String)],
 ) -> Result<(), ParseError> {
+    crate::ast::clear_eval_preview();
     loop {
         let pending = makefile.drain_eval_queue();
         if pending.is_empty() {
@@ -1106,7 +1142,8 @@ fn patsubst(pattern: &str, replacement: &str, text: &str) -> String {
     for word in text.split_whitespace() {
         if pattern.contains('%') {
             if let Some(stem) = match_pattern_stem(pattern, word) {
-                words.push(replacement.replace('%', &stem));
+                // Only the first '%' of the replacement is the stem.
+                words.push(replacement.replacen('%', &stem, 1));
             } else {
                 words.push(word.to_string());
             }
@@ -1197,14 +1234,14 @@ fn automatic_var(
 
 /// `NAME := v`, `NAME ::= v`, `NAME = v`, `NAME += v`, `NAME ?= v` from an
 /// `$(eval)` run during the build, applied to the runtime overlay.
-fn eval_assignment_at_runtime(text: &str, makefile: &Makefile) {
+fn eval_assignment_at_runtime(text: &str, makefile: &Makefile, set: impl Fn(String, String)) {
     for line in text.lines() {
-        let line = line.trim();
+        let line = line.trim_start();
         let Some(eq) = find_top_level_char(line, '=') else {
             continue;
         };
         let lhs = &line[..eq];
-        let value = line[eq + 1..].trim();
+        let value = line[eq + 1..].trim_start();
         let (name, op) = if let Some(n) = lhs.strip_suffix("::") {
             (n, ':')
         } else if let Some(n) = lhs.strip_suffix(':') {
@@ -1221,6 +1258,17 @@ fn eval_assignment_at_runtime(text: &str, makefile: &Makefile) {
             continue;
         }
         let val = match op {
+            // While reading the makefile this is only a preview: expanding
+            // again would repeat $(shell) or $(info); the queue does it once.
+            ':' if !crate::ast::in_execution_phase()
+                && ["shell", "info", "warning", "error", "eval", "file"]
+                    .iter()
+                    .any(|f| {
+                        value.contains(&format!("({f} ")) || value.contains(&format!("{{{f} "))
+                    }) =>
+            {
+                continue;
+            }
             ':' => expand_variables(value, makefile, None, &[]),
             '+' => {
                 let prev = makefile.get_var(name).unwrap_or_default();
@@ -1233,7 +1281,7 @@ fn eval_assignment_at_runtime(text: &str, makefile: &Makefile) {
             '?' if makefile.get_var(name).is_some() => continue,
             _ => value.to_string(),
         };
-        crate::ast::set_runtime_var(name.to_string(), val);
+        set(name.to_string(), val);
     }
 }
 
@@ -1572,6 +1620,10 @@ fn expand_wildcard(pattern: &str) -> Vec<String> {
                 for entry in entries.flatten() {
                     let fname = entry.file_name();
                     let fname_str = fname.to_string_lossy();
+                    // As glob(3): a leading '.' is matched only explicitly.
+                    if fname_str.starts_with('.') && !part.starts_with('.') {
+                        continue;
+                    }
                     if glob_match(part, &fname_str) {
                         let path_str = if base.is_empty() {
                             fname_str.to_string()
@@ -1680,11 +1732,13 @@ pub fn parse_makefile_into(
         // literal '#'), so directives like `include x # c` and `endif # c` work.
         let is_recipe_line = line.starts_with('\t') && current_target.is_some();
         let uncommented;
-        let trimmed: &str = if is_recipe_line {
-            line.trim()
+        // `full` keeps trailing whitespace, which an assignment's value keeps
+        // in GNU make (`A := x  # c` is "x  ").
+        let (trimmed, full): (&str, &str) = if is_recipe_line {
+            (line.trim(), line.as_ref())
         } else {
             uncommented = strip_comment(line);
-            uncommented.trim()
+            (uncommented.trim(), uncommented.as_ref())
         };
 
         // Check conditional directives: ifeq, ifneq, ifdef, ifndef, else, endif
@@ -2061,7 +2115,9 @@ pub fn parse_makefile_into(
                 } else {
                     key_raw.to_string()
                 };
-                let raw_val = effective_line[ep + 1..].trim();
+                let value_start =
+                    effective_line.as_ptr() as usize - full.as_ptr() as usize + ep + 1;
+                let raw_val = full[value_start..].trim_start();
                 if export_this {
                     makefile.exported.insert(key.clone(), true);
                 }
@@ -2367,12 +2423,16 @@ pub fn parse_makefile_into(
 
 fn eval_condition(line: &str, makefile: &Makefile) -> bool {
     let trimmed = line.trim();
+    // ifdef: the (expanded) name has a non-empty value; a value that is
+    // only spaces counts, as in GNU make.
+    let defined = |var: &str| {
+        let var = expand_variables(var.trim(), makefile, None, &[]);
+        makefile.get_var(var.trim()).is_some_and(|v| !v.is_empty())
+    };
     if let Some(var) = trimmed.strip_prefix("ifdef ") {
-        let var = var.trim();
-        return makefile.get_var(var).is_some_and(|v| !v.trim().is_empty());
+        return defined(var);
     } else if let Some(var) = trimmed.strip_prefix("ifndef ") {
-        let var = var.trim();
-        return makefile.get_var(var).is_none_or(|v| v.trim().is_empty());
+        return !defined(var);
     }
 
     let is_eq = trimmed.starts_with("ifeq");
@@ -2386,9 +2446,11 @@ fn eval_condition(line: &str, makefile: &Makefile) -> bool {
         let inner = &content[1..content.len() - 1];
         let args = split_top_level_args(inner);
         if args.len() >= 2 {
+            // GNU make strips the first argument's trailing whitespace and
+            // the second's leading whitespace, before expanding them.
             (
-                args[0].trim().to_string(),
-                args[1..].join(",").trim().to_string(),
+                args[0].trim_end().to_string(),
+                args[1..].join(",").trim_start().to_string(),
             )
         } else {
             (inner.trim().to_string(), String::new())
@@ -2399,9 +2461,10 @@ fn eval_condition(line: &str, makefile: &Makefile) -> bool {
         if let Some(close1) = rest.find(quote) {
             let s1 = &rest[..close1];
             let after1 = rest[close1 + 1..].trim();
-            if after1.starts_with(quote) {
+            // The second string may use the other kind of quote.
+            if let Some(quote2) = after1.chars().next().filter(|c| *c == '"' || *c == '\'') {
                 let rest2 = &after1[1..];
-                if let Some(close2) = rest2.find(quote) {
+                if let Some(close2) = rest2.find(quote2) {
                     let s2 = &rest2[..close2];
                     (s1.to_string(), s2.to_string())
                 } else {
