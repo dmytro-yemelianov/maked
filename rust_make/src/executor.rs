@@ -124,6 +124,81 @@ pub fn create_shell_command_with(shell: &str, cmd: &str) -> Command {
     }
 }
 
+/// On macOS a spawned thread starts below the main thread's QoS class, and
+/// recipes it spawns inherit that, landing on efficiency cores (seen as 2x
+/// slower, noisy builds). Raise the calling thread to the main thread's
+/// class. No-op elsewhere.
+pub fn match_main_thread_qos() {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn qos_class_main() -> u32;
+            fn pthread_set_qos_class_self_np(qos: u32, relpri: i32) -> i32;
+        }
+        // SAFETY: plain libc calls on the current thread.
+        unsafe {
+            pthread_set_qos_class_self_np(qos_class_main(), 0);
+        }
+    }
+}
+
+static PROCESS_ENV: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static PROGRAM_PATHS: std::sync::OnceLock<Mutex<HashMap<(String, String), String>>> =
+    std::sync::OnceLock::new();
+
+/// Put the recipe environment (exported variables, MAKEFLAGS) into this
+/// process's own environment once, so recipes inherit it without a
+/// per-spawn environment copy. Call from `main` only, before any thread
+/// other than the caller exists; tests run executors concurrently in one
+/// process and must not use it.
+pub fn install_process_env(env: &crate::ast::RecipeEnv, makeflags: &str) {
+    for (k, v) in &env.set {
+        // SAFETY: called once at startup while no other thread reads or
+        // writes the environment.
+        unsafe { std::env::set_var(k, v) };
+    }
+    unsafe { std::env::set_var("MAKEFLAGS", makeflags) };
+    let _ = PROCESS_ENV.set(makeflags.to_string());
+}
+
+/// `program` as an absolute path, searched once per (PATH, program): Rust's
+/// spawn otherwise walks PATH on every call, which costs about a third of a
+/// millisecond per recipe line.
+fn resolve_program(program: &str, env: &crate::ast::RecipeEnv) -> String {
+    if program.contains('/') || program.is_empty() {
+        return program.to_string();
+    }
+    let path = env
+        .set
+        .iter()
+        .find(|(k, _)| k == "PATH")
+        .map(|(_, v)| v.clone())
+        .or_else(|| std::env::var("PATH").ok())
+        .unwrap_or_default();
+    let key = (path.clone(), program.to_string());
+    let cache = PROGRAM_PATHS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = cache.lock().unwrap().get(&key) {
+        return hit.clone();
+    }
+    #[cfg(unix)]
+    let found = {
+        use std::os::unix::fs::PermissionsExt;
+        path.split(':').find_map(|dir| {
+            let dir = if dir.is_empty() { "." } else { dir };
+            let cand = std::path::Path::new(dir).join(program);
+            let meta = std::fs::metadata(&cand).ok()?;
+            (meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+                .then(|| cand.to_string_lossy().to_string())
+        })
+    };
+    #[cfg(not(unix))]
+    let found: Option<String> = None;
+    // Not found: leave the name; spawn reports the error as before.
+    let resolved = found.unwrap_or_else(|| program.to_string());
+    cache.lock().unwrap().insert(key, resolved.clone());
+    resolved
+}
+
 /// Strip GNU recipe prefixes (`@` silent, `-` ignore errors, `+` run even
 /// under -n). Returns (rest, silent, ignore, force).
 pub fn recipe_prefixes(mut s: &str) -> (&str, bool, bool, bool) {
@@ -188,12 +263,12 @@ fn recipe_command(cmd: &str, makeflags: Option<&str>, env: &crate::ast::RecipeEn
             .next()
             .is_some_and(|w| SH_BUILTINS.contains(&w));
     let mut command = if needs_shell {
-        create_shell_command_with(&env.shell, cmd)
+        create_shell_command_with(&resolve_program(&env.shell, env), cmd)
     } else {
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         match parts.split_first() {
             Some((program, args)) => {
-                let mut c = Command::new(program);
+                let mut c = Command::new(resolve_program(program, env));
                 c.args(args);
                 c
             }
@@ -203,11 +278,19 @@ fn recipe_command(cmd: &str, makeflags: Option<&str>, env: &crate::ast::RecipeEn
     for name in &env.unset {
         command.env_remove(name);
     }
-    for (k, v) in &env.set {
-        command.env(k, v);
+    // When `install_process_env` put the exported variables and MAKEFLAGS
+    // into this process's environment, children inherit them as-is; setting
+    // them per command would make every spawn copy the whole environment.
+    let installed = PROCESS_ENV.get();
+    if installed.is_none() {
+        for (k, v) in &env.set {
+            command.env(k, v);
+        }
     }
     if let Some(mf) = makeflags {
-        command.env("MAKEFLAGS", mf);
+        if installed.is_none_or(|m| m != mf) {
+            command.env("MAKEFLAGS", mf);
+        }
     }
     command
 }
@@ -668,6 +751,7 @@ impl<'a> Executor<'a> {
             let worker_num = (worker_id + 1) as u32;
 
             let handle = std::thread::spawn(move || {
+                match_main_thread_qos();
                 let pid = std::process::id();
                 tracer_clone.record_metadata(
                     "thread_name",
@@ -790,8 +874,21 @@ impl<'a> Executor<'a> {
                             let mtime_before = get_file_mtime(&task);
                             let _job_token = match jobserver_clone.acquire() {
                                 Ok(t) => t,
-                                Err(_) => {
+                                Err(e) => {
+                                    // Never stop silently: a lost jobserver
+                                    // used to end the build "successfully"
+                                    // with nothing built.
+                                    *failed_error_clone.lock().unwrap() =
+                                        Some(ExecutionError::CommandSpawnFailed(
+                                            format!("jobserver token for '{task}'"),
+                                            e.to_string(),
+                                        ));
                                     abort_flag_clone.store(true, Ordering::Relaxed);
+                                    let _ = done_tx_clone.send((
+                                        task.clone(),
+                                        TargetStatus::Failed,
+                                        Vec::new(),
+                                    ));
                                     break;
                                 }
                             };

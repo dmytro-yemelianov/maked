@@ -220,3 +220,38 @@ fn test_gnu_make_under_maked_jobserver() {
         "{stdout}"
     );
 }
+
+/// A sub-make whose makefile is remade first (an `-include` with a rule)
+/// builds a throwaway executor for that phase. It used to close the
+/// inherited jobserver pipe when dropped, and the real build then failed
+/// with EBADF (jq under `make -j8`).
+#[test]
+fn test_submake_with_remade_include_keeps_jobserver() {
+    let dir = std::env::temp_dir().join(format!("maked_remake_js_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(
+        dir.join("sub/Makefile"),
+        "all: a b\n-include gen.mk\ngen.mk:\n\t@echo 'X = 1' > gen.mk\na:\n\t@echo built-a$(X)\nb:\n\t@echo built-b$(X)\n",
+    )
+    .unwrap();
+    fs::write(dir.join("Makefile"), "all:\n\t@$(MAKE) -C sub\n").unwrap();
+    let out = Command::new(get_maked_bin())
+        .arg("-C")
+        .arg(&dir)
+        .arg("-j4")
+        .env_remove("MAKEFLAGS")
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("built-a1") && stdout.contains("built-b1"),
+        "{stdout}"
+    );
+}

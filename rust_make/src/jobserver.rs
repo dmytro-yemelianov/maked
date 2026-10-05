@@ -40,10 +40,14 @@ enum JobServerMode {
         read_file: File,
         write_file: File,
     },
+    /// The descriptors belong to the process (inherited from a parent make,
+    /// or created as master and passed to children), not to this value:
+    /// several `JobServer`s in one process may wrap the same pair, so dropping
+    /// one must not close them (`ManuallyDrop`).
     #[cfg(unix)]
     Pipe {
-        read_file: File,
-        write_file: File,
+        read_file: std::mem::ManuallyDrop<File>,
+        write_file: std::mem::ManuallyDrop<File>,
     },
 }
 
@@ -98,8 +102,10 @@ impl JobServer {
                     if let (Ok(r_fd), Ok(w_fd)) =
                         (parts[0].parse::<RawFd>(), parts[1].parse::<RawFd>())
                     {
-                        let read_file = unsafe { File::from_raw_fd(r_fd) };
-                        let write_file = unsafe { File::from_raw_fd(w_fd) };
+                        let read_file =
+                            std::mem::ManuallyDrop::new(unsafe { File::from_raw_fd(r_fd) });
+                        let write_file =
+                            std::mem::ManuallyDrop::new(unsafe { File::from_raw_fd(w_fd) });
                         return Ok(Self {
                             mode: JobServerMode::Pipe {
                                 read_file,
@@ -126,8 +132,9 @@ impl JobServer {
                 if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
-                let read_file = unsafe { File::from_raw_fd(fds[0]) };
-                let mut write_file = unsafe { File::from_raw_fd(fds[1]) };
+                let read_file = std::mem::ManuallyDrop::new(unsafe { File::from_raw_fd(fds[0]) });
+                let mut write_file =
+                    std::mem::ManuallyDrop::new(unsafe { File::from_raw_fd(fds[1]) });
                 let tokens_to_write = requested_jobs.saturating_sub(1);
                 if tokens_to_write > 0 {
                     write_file.write_all(&vec![b'+'; tokens_to_write])?;
@@ -179,7 +186,7 @@ impl JobServer {
             }
             #[cfg(unix)]
             JobServerMode::Pipe { read_file, .. } => {
-                let mut rf = read_file;
+                let mut rf: &File = read_file;
                 let mut buf = [0u8; 1];
                 rf.read_exact(&mut buf)?;
                 Ok(TokenGuard {
@@ -207,7 +214,7 @@ impl JobServer {
             {
                 #[cfg(unix)]
                 if let JobServerMode::Pipe { write_file, .. } = &self.mode {
-                    let mut wf = write_file;
+                    let mut wf: &File = write_file;
                     let _ = wf.write_all(b"+");
                     let _ = wf.flush();
                 }

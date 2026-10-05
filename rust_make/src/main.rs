@@ -43,7 +43,10 @@ fn main() -> ExitCode {
     std::thread::Builder::new()
         .name("maked".to_string())
         .stack_size(MAIN_STACK_BYTES)
-        .spawn(real_main)
+        .spawn(|| {
+            maked::executor::match_main_thread_qos();
+            real_main()
+        })
         .expect("failed to spawn main thread")
         .join()
         .unwrap_or(ExitCode::from(2))
@@ -574,6 +577,13 @@ fn real_main() -> ExitCode {
         .unwrap_or_else(|| "maked".to_string());
 
     let executor = Executor::with_jobserver(&makefile, &graph, config, jobserver);
+    // Recipes inherit MAKEFLAGS and exported variables from this process's
+    // environment (set once here, before any worker thread exists).
+    {
+        let cur = env::var("MAKEFLAGS").unwrap_or_default();
+        let mf = executor.jobserver.child_makeflags(&cur);
+        maked::executor::install_process_env(&executor.recipe_env, &mf);
+    }
 
     for tgt in &run_targets {
         match executor.execute(tgt) {
