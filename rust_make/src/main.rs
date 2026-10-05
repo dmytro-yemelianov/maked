@@ -50,10 +50,7 @@ fn main() -> ExitCode {
         })
         .expect("failed to spawn main thread")
         .join()
-        .map(|c| {
-            maked::decisions::flush();
-            c
-        })
+        .inspect(|_| maked::decisions::flush())
         .unwrap_or(ExitCode::from(2))
 }
 
