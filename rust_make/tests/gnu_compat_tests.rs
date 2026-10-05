@@ -514,3 +514,15 @@ fn included_makefiles_are_remade_and_reread() {
     // A missing include nothing can make is an error in both.
     assert_same(&[("Makefile", "all:\n\t@echo hi\ninclude nope.mk\n")], &[]);
 }
+
+#[test]
+fn backslash_newline_in_variables_and_recipes() {
+    assert_same(
+        &[(
+            "Makefile",
+            "FLAGS = -a   \\\n      -b \\\n\t-c\n\
+             all:\n\t@echo '[$(FLAGS)]'\n\t@echo one\\\n\ttwo\n\t@echo 'in\\\n\tquotes'\n\t@x=1; \\\n\techo x=$$x\n",
+        )],
+        &[],
+    );
+}

@@ -1235,6 +1235,37 @@ fn lexical_abspath(cwd: &Path, name: &str) -> String {
     format!("/{}", parts.join("/"))
 }
 
+/// Marks a backslash-newline joined by the first parsing pass.
+const CONTINUATION: char = '\u{1}';
+
+/// A line ending in an odd number of backslashes continues on the next line.
+fn ends_with_unescaped_backslash(line: &str) -> bool {
+    line.bytes().rev().take_while(|&b| b == b'\\').count() % 2 == 1
+}
+
+/// Recipe lines keep `\`+newline for the shell, dropping one leading tab
+/// from each continuation line. Other lines turn each continuation and the
+/// whitespace around it into a single space, as GNU make does.
+fn resolve_continuations(line: &str, is_recipe: bool) -> String {
+    if !line.contains(CONTINUATION) {
+        return line.to_string();
+    }
+    let mut parts = line.split(CONTINUATION);
+    let mut out = parts.next().unwrap_or_default().to_string();
+    for part in parts {
+        if is_recipe {
+            out.push_str("\\\n");
+            out.push_str(part.strip_prefix('\t').unwrap_or(part));
+        } else {
+            let kept = out.trim_end().len();
+            out.truncate(kept);
+            out.push(' ');
+            out.push_str(part.trim_start());
+        }
+    }
+    out
+}
+
 /// Drop a make comment: everything from the first `#` not written as `\#`.
 /// `\#` becomes a literal `#`.
 fn strip_comment(line: &str) -> std::borrow::Cow<'_, str> {
@@ -1568,11 +1599,14 @@ pub fn parse_makefile_into(
     while i < raw_lines.len() {
         let line_num = i + 1;
         let mut line = raw_lines[i].to_string();
-        while line.ends_with('\\') && i + 1 < raw_lines.len() {
+        // Keep each backslash-newline as a marker: a recipe line passes it to
+        // the shell as `\`+newline, any other line turns it and the space
+        // around it into one space (`resolve_continuations`).
+        while ends_with_unescaped_backslash(&line) && i + 1 < raw_lines.len() {
             line.pop(); // remove \
             i += 1;
-            line.push(' ');
-            line.push_str(raw_lines[i].trim_start());
+            line.push(CONTINUATION);
+            line.push_str(raw_lines[i]);
         }
         combined_lines.push((line_num, line));
         i += 1;
@@ -1583,8 +1617,11 @@ pub fn parse_makefile_into(
 
     let mut line_idx = 0;
     while line_idx < combined_lines.len() {
-        let (line_num, ref line) = combined_lines[line_idx];
+        let (line_num, ref joined) = combined_lines[line_idx];
         line_idx += 1;
+        let resolved =
+            resolve_continuations(joined, joined.starts_with('\t') && current_target.is_some());
+        let line = &resolved;
 
         // In a rule, a tab-led line is recipe text and keeps its '#'. Every
         // other line loses its comment first, as in GNU make (`\#` is a
@@ -1672,7 +1709,7 @@ pub fn parse_makefile_into(
                 if dline.trim() == "endef" {
                     break;
                 }
-                def_body.push(dline.clone());
+                def_body.push(dline.replace(CONTINUATION, "\\\n"));
             }
             let full_val = def_body.join("\n");
             let final_val = if is_immediate {

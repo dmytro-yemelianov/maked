@@ -187,6 +187,16 @@ def build_with(tool, name, spec, work, logdir):
     res["incr_changed"] = changed(before, snapshot(tree))
     rc, _, out = run(spec["smoke"], tree, log)
     res["smoke_after_incr_ok"] = rc == 0 and spec["expect"] in out
+
+    # Interchangeable trees: after this tool, GNU make must find nothing to
+    # do (a difference in expanded flags, e.g. git's GIT-CFLAGS, would make
+    # it rebuild everything).
+    if Path(tool).name == "maked":
+        time.sleep(1.1)
+        before = snapshot(tree)
+        rc, _, _ = run([GMAKE, JOBS] + spec["args"], tree, log)
+        res["gnu_after_ok"] = rc == 0
+        res["gnu_after_changed"] = changed(before, snapshot(tree))
     return res
 
 
@@ -214,6 +224,9 @@ def main():
         if set(m.get("null_changed", [])) != set(g.get("null_changed", [])):
             only_m = sorted(set(m.get("null_changed", [])) - set(g.get("null_changed", [])))
             problems.append(f"null build differs: maked also changed {len(only_m)} files: {only_m[:5]}")
+        extra = sorted(set(m.get("gnu_after_changed", [])) - set(g.get("null_changed", [])))
+        if extra or m.get("gnu_after_ok") is False:
+            problems.append(f"GNU make after maked rebuilt {len(extra)} files: {extra[:5]}")
         if set(m.get("produced", [])) != set(g.get("produced", [])):
             only_m = sorted(set(m.get("produced", [])) - set(g.get("produced", [])))
             only_g = sorted(set(g.get("produced", [])) - set(m.get("produced", [])))
