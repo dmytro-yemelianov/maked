@@ -2,6 +2,7 @@ use makeyd::executor::{ExecutionConfig, Executor};
 use makeyd::graph::DependencyGraph;
 use makeyd::parser::parse_makefile_content;
 use std::fs;
+use std::process::Command;
 
 fn make_config(jobs: usize) -> ExecutionConfig {
     ExecutionConfig {
@@ -220,4 +221,41 @@ app:
     let cli = vec![("CFLAGS".to_string(), "-O3".to_string())];
     let mf = parse_makefile_content(makefile_content, &cli).expect("parse");
     assert_eq!(mf.get_var("CFLAGS"), Some("-O3".to_string()));
+}
+
+/// GNU make handles dependency chains thousands of targets deep; makeyd used
+/// to overflow its stack around 12k and spend O(depth^2) memory before that.
+#[test]
+fn test_deep_dependency_chain() {
+    const N: usize = 20_000;
+    let temp_dir = std::env::temp_dir().join(format!("makeyd_deep_chain_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+    let mut mf = String::from(".PHONY: all\n");
+    mf.push_str(&format!("all: node_{}\n", N - 1));
+    mf.push_str("node_0:\n\t@touch $@\n");
+    for i in 1..N {
+        mf.push_str(&format!("node_{i}: node_{}\n\t@touch $@\n", i - 1));
+    }
+    fs::write(temp_dir.join("Makefile"), mf).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_makeyd");
+    for jobs in ["-j1", "-j8"] {
+        let out = Command::new(bin)
+            .arg("-C")
+            .arg(&temp_dir)
+            .arg(jobs)
+            .arg("-n")
+            .arg("all")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{jobs}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let lines = String::from_utf8_lossy(&out.stdout).lines().count();
+        assert_eq!(lines, N, "{jobs}: expected one touch per node");
+    }
+    let _ = fs::remove_dir_all(&temp_dir);
 }

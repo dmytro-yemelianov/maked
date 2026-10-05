@@ -1,6 +1,6 @@
 # Inside makeyd: a make in Rust, a model in Lean, and the benchmark that lied
 
-*Dmytro Yemelianov · October 2026 · [makeyd v0.1.0](https://github.com/dmytro-yemelianov/makeyd/releases/tag/v0.1.0)*
+*Dmytro Yemelianov · October 2026 · [makeyd v0.1.1](https://github.com/dmytro-yemelianov/makeyd/releases/tag/v0.1.1)*
 
 makeyd ("make by Yemelianov Dmytro") is a POSIX make (IEEE Std 1003.1) with
 the GNU extensions people actually use. It is written in Rust with zero
@@ -199,68 +199,92 @@ works as follows:
   no shell);
 - every result is written to `fair_bench.json`.
 
-### Results
+### Results (v0.1.1)
 
 Machine: Apple M5 (10 cores), macOS (Darwin 27.2), GNU Make 4.4.1,
-Ninja 1.13.2, makeyd 0.1.0, all at `-j8`. Mean ± σ.
+Ninja 1.13.2, makeyd 0.1.1, all at `-j8`. Mean ± σ.
 
 **Null build (everything up to date), milliseconds.** Lower is better.
 
 | Graph | makeyd | GNU make | Ninja | makeyd peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| modular, 1,000 targets | 18.2 ± 0.5 | 19.4 ± 6.5 | **4.2 ± 0.3** | 7.5 MB |
-| modular, 5,000 | 107.1 ± 11.8 | 107.0 ± 10.1 | **16.6 ± 0.9** | 22.4 MB |
-| modular, 10,000 | 223.6 ± 33.9 | 204.0 ± 13.1 | **30.9 ± 4.5** | 41.2 MB |
-| wide fan-out, 5,000 | 102.5 ± 10.0 | 95.4 ± 7.1 | **15.0 ± 0.9** | 20.4 MB |
-| diamond lattice, 2,500 | 37.7 ± 2.2 | 7.8 ± 0.5 | **5.1 ± 0.4** | 12.4 MB |
-| deep chain, 2,000 | 62.6 ± 3.4 | 6.7 ± 0.4 | **4.2 ± 0.3** | 93.3 MB |
-| Lua 5.4.9 (real project) | 15.1 ± 1.7 | 15.3 ± 5.4 | — | — |
+| modular, 1,000 targets | 9.8 ± 0.8 | 18.2 ± 1.3 | **4.2 ± 0.4** | 6.5 MB |
+| modular, 5,000 | 43.9 ± 1.7 | 93.2 ± 8.9 | **15.7 ± 1.6** | 17.9 MB |
+| modular, 10,000 | 97.5 ± 17.3 | 186.1 ± 8.9 | **29.1 ± 1.3** | 32.9 MB |
+| wide fan-out, 5,000 | 71.5 ± 9.8 | 168.3 ± 24.7 | **26.3 ± 3.2** | 16.3 MB |
+| diamond lattice, 2,500 | 15.1 ± 0.9 | 7.3 ± 0.6 | **5.2 ± 0.5** | 7.8 MB |
+| deep chain, 2,000 | 9.9 ± 0.8 | 5.9 ± 0.4 | **3.9 ± 0.3** | 7.8 MB |
+| Lua 5.4.9 (real project) | 24.7 ± 3.2 | 23.7 ± 4.4 | — | — |
 
 **Cold build, seconds** (5 runs; Lua 3 runs). Every recipe is a `touch`,
 except for Lua, which really compiles.
 
 | Graph | makeyd | GNU make | Ninja |
 | --- | ---: | ---: | ---: |
-| modular, 1,000 | 0.41 ± 0.06 | **0.29 ± 0.03** | 0.80 ± 0.09 |
-| modular, 5,000 | **1.77 ± 0.08** | 1.95 ± 0.79 | 5.12 ± 0.44 |
-| modular, 10,000 | 4.76 ± 0.47 | **4.18 ± 0.70** | 9.72 ± 1.42 |
-| wide fan-out, 5,000 | **1.91 ± 0.09** | 19.70 ± 0.88 | 4.18 ± 0.23 |
-| diamond lattice, 2,500 | 0.87 ± 0.06 | **0.63 ± 0.09** | 1.83 ± 0.17 |
-| deep chain, 2,000 | 2.81 ± 0.16 | **2.21 ± 0.11** | 7.74 ± 1.37 |
-| Lua 5.4.9, `make macosx` | 2.62 ± 0.10 | **0.66 ± 0.09** | — |
+| modular, 1,000 | 0.44 ± 0.11 | **0.25 ± 0.01** | 0.70 ± 0.02 |
+| modular, 5,000 | 1.61 ± 0.04 | **1.21 ± 0.04** | 3.67 ± 0.25 |
+| modular, 10,000 | 3.09 ± 0.07 | **2.35 ± 0.05** | 6.98 ± 0.17 |
+| wide fan-out, 5,000 | **1.59 ± 0.18** | 20.38 ± 4.53 | 6.47 ± 0.63 |
+| diamond lattice, 2,500 | 0.76 ± 0.01 | **0.53 ± 0.03** | 1.78 ± 0.16 |
+| deep chain, 2,000 | 3.07 ± 0.06 | **2.02 ± 0.08** | 7.00 ± 0.15 |
+| Lua 5.4.9, `make macosx` | 1.07 ± 0.11 | **0.98 ± 0.10** | — |
 
 ### Reading the numbers
 
-- **Ninja wins every null build.** It is 4–7× faster than both makes on
-  modular and wide graphs, and 1.5× faster than GNU make on diamond and
-  deep graphs. That is expected, and it is what Ninja was built for: a pre-lowered manifest, no variable expansion,
-  no implicit-rule search, and a binary log. A make has to re-parse and
+- **Ninja wins every null build.** That is expected, and it is what Ninja
+  was built for: a pre-lowered manifest, no variable expansion, no
+  implicit-rule search, and a binary log. A make has to re-parse and
   re-evaluate the Makefile on every run.
-- **On null builds, makeyd is at parity with GNU make on modular, wide and
-  real-world graphs.** That holds at 1,000, 5,000 and 10,000 targets and on
-  Lua, with every difference inside one σ.
-- **makeyd has a superlinear hot spot on deep and diamond graphs.** It is
-  5–10× slower than GNU make there, and peak RSS on a 2,000-long chain is
-  93 MB, against 20 MB for 5,000 wide targets. Memory growing with depth
-  rather than node count points to per-level copying in graph evaluation.
-  It is the first optimization target.
-- **On cold synthetic builds, makeyd is within 1.0–1.4× of GNU make, and
-  both makes beat Ninja by 2–3.5×.** The exception is GNU make on the wide
-  graph, covered below. The likely reason, which I have not
-  profiled: both makes `exec` simple recipes directly, while Ninja always
-  goes through `/bin/sh -c`. GNU make's 19.7 s on the wide fan-out graph
-  reproduced across all five runs. I haven't explained it yet, so read it as
-  a measured anomaly, not a win.
-- **Lua shows a real bug, and it is not in compilation speed.** Lua's
-  top-level Makefile runs `cd src && $(MAKE) macosx`, which recurses once
-  more. Under makeyd, `-j8` and `-j1` both take about 2.3 s, so the sub-make
-  runs serially. Invoked directly on `src/` with the same flags, makeyd
-  builds Lua at `-j8` in **0.55 s**, in line with GNU make's 0.66 s for the
-  full recursive build. Parallelism is lost on the way through the
-  recursive `$(MAKE)`. The most likely cause is that the job slots never
-  reach the child; I haven't confirmed that yet. That is the second
-  optimization target, and a correctness one too, because recursive make is
-  everywhere.
+- **On null builds, makeyd is 1.8–2.4× faster than GNU make on modular
+  and wide graphs, and ties on Lua.** On diamond and deep graphs it is
+  still 1.7–2.1× slower, which is 15 against 7 ms and 10 against 6 ms. The
+  remaining cost there is coordinating worker threads on graphs with
+  almost no parallelism.
+- **On cold synthetic builds, GNU make is 1.3–1.75× faster than makeyd,
+  and both makes beat Ninja by 2–3.5×.** The likely reason, which I have
+  not profiled: both makes `exec` simple recipes directly, while Ninja
+  always goes through `/bin/sh -c`. GNU make's 16–20 s on the wide fan-out
+  graph reproduces in every run, with high variance. I haven't explained it yet, so read
+  it as a measured anomaly, not a win.
+- **On Lua, makeyd and GNU make are at parity** for both full and null
+  builds.
+
+### What v0.1.1 fixed
+
+The v0.1.0 measurements found three real bugs. Each now has a regression
+test:
+
+1. **Job slots lost through recursive `$(MAKE)`.** A sub-make gets its
+   `-jN` and `--jobserver-auth` through `MAKEFLAGS`, but makeyd read the job
+   count only from argv. Every sub-make therefore ran at `-j1`. Lua's
+   `cd src && $(MAKE) macosx` took 2.6 s at `-j8`, exactly as long as at
+   `-j1`. The sub-make now inherits the job count, and the shared token pool
+   still caps total concurrency. Lua at `-j8`: 2.62 s → 1.07 s, against
+   GNU make's 0.98 s in the same run.
+2. **O(depth²) critical-path analysis.** After every build, makeyd computes
+   the critical path, and it memoized a full copy of the best path at every
+   node. On a 4,000-long chain that cost 345 MB. It now stores only the best
+   predecessor per node, iteratively, so cost is O(V + E): 4,000-deep went
+   from 345 MB to 14 MB.
+3. **Stack overflow on deep graphs.** Cycle checking and sequential
+   evaluation recurse once per dependency level, and a 12,000-long chain
+   aborted with a stack overflow that GNU make does not have. makeyd now runs
+   on a thread with a 256 MiB reserved stack (virtual memory, committed only
+   as used). A 20,000-deep chain is in the test suite.
+
+Two further speedups came from profiling the fixed build:
+
+- **The coordinator settles up-to-date targets itself** instead of sending
+  each one to a worker thread and waiting for the reply. On a chain, that
+  round trip was most of a null build.
+- **No `stat(2)` per prerequisite when no `vpath`/`VPATH` is set.**
+  Prerequisite expansion ran a vpath lookup, and so a `stat`, for every
+  prerequisite on every rule lookup, several times per node. Without vpath,
+  that lookup can only return the name it was given.
+
+Null builds from v0.1.0 to v0.1.1, end to end: the 2,000-long chain went
+from 62.6 ms to 9.9 ms, diamond from 37.7 ms to 15.1 ms, and modular 10,000
+from 223.6 ms to 97.5 ms.
 
 ## 5. Shipping it
 
@@ -295,8 +319,9 @@ microcontrollers would be a different product.
 
 ## 6. Known gaps
 
-- Job slots are lost through recursive `$(MAKE)` (see Lua above).
-- Superlinear time and memory on deep and diamond graphs.
+- On graphs with almost no parallelism (diamond, deep chains), null builds
+  are still 1.7–2.1× slower than GNU make. Cold synthetic builds are
+  1.3–1.75× slower.
 - `--worker-listen` runs any command a TCP peer sends, **with no
   authentication or encryption**. Use it only on loopback or a network you
   fully trust.

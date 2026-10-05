@@ -1007,14 +1007,28 @@ impl<'a> Executor<'a> {
             }
         }
 
+        // Targets the coordinator settles itself (already up to date) skip the
+        // worker round-trip; on a dependency chain that hop was most of a
+        // null build's cost.
+        let mut settled: VecDeque<(String, TargetStatus, Vec<String>)> = VecDeque::new();
         for task in ready_queue.drain(..) {
-            let _ = task_tx.send(task);
+            let pre = self.settle_inline(&task, &target_statuses.lock().unwrap());
+            match pre {
+                Some(status) => settled.push_back((task, status, Vec::new())),
+                None => {
+                    let _ = task_tx.send(task);
+                }
+            }
         }
 
         let mut remaining_targets = reachable.len();
 
         while remaining_targets > 0 {
-            match done_rx.recv() {
+            let next = match settled.pop_front() {
+                Some(item) => Ok(item),
+                None => done_rx.recv(),
+            };
+            match next {
                 Ok((finished_node, status, logs)) => {
                     if !logs.is_empty() {
                         for line in logs {
@@ -1054,7 +1068,16 @@ impl<'a> Executor<'a> {
                                 if let Some(deg) = in_degrees.get_mut(dep) {
                                     *deg = deg.saturating_sub(1);
                                     if *deg == 0 {
-                                        let _ = task_tx.send(dep.clone());
+                                        let pre = self
+                                            .settle_inline(dep, &target_statuses.lock().unwrap());
+                                        match pre {
+                                            Some(st) => {
+                                                settled.push_back((dep.clone(), st, Vec::new()))
+                                            }
+                                            None => {
+                                                let _ = task_tx.send(dep.clone());
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1106,6 +1129,47 @@ impl<'a> Executor<'a> {
             critical_path_duration: std::time::Duration::from_micros(crit_us),
             critical_path: crit_path,
         })
+    }
+
+    /// Decide on the coordinator thread whether `target` is already up to
+    /// date, given its finished prerequisites. Returns `None` whenever the
+    /// target needs a worker: it must be rebuilt, has no rule, has a failed
+    /// prerequisite, or freshness depends on the hash database.
+    fn settle_inline(
+        &self,
+        target: &str,
+        statuses: &HashMap<String, TargetStatus>,
+    ) -> Option<TargetStatus> {
+        if self.config.use_hash || self.config.always_make {
+            return None;
+        }
+        let rule = self.makefile.get_rule(target)?;
+        let mut any_dep_rebuilt = false;
+        let mut newest_dep_mtime: Option<SystemTime> = None;
+        for dep in &rule.prereqs {
+            if get_file_mtime(dep).is_none() && self.makefile.resolve_path(dep).is_none() {
+                any_dep_rebuilt = true;
+            }
+            match statuses.get(dep) {
+                Some(TargetStatus::Failed) => return None,
+                Some(TargetStatus::Rebuilt(t)) => {
+                    any_dep_rebuilt = true;
+                    if newest_dep_mtime.is_none_or(|cur| *t > cur) {
+                        newest_dep_mtime = Some(*t);
+                    }
+                }
+                Some(TargetStatus::UpToDate(Some(t))) => {
+                    if newest_dep_mtime.is_none_or(|cur| *t > cur) {
+                        newest_dep_mtime = Some(*t);
+                    }
+                }
+                Some(TargetStatus::UpToDate(None)) | None => {}
+            }
+        }
+        match evaluate_freshness(&rule, false, any_dep_rebuilt, newest_dep_mtime) {
+            FreshnessDecision::UpToDate(mtime) => Some(TargetStatus::UpToDate(Some(mtime))),
+            FreshnessDecision::NeedsRebuild(_) => None,
+        }
     }
 
     pub fn execute(&self, root: &str) -> Result<ExecutionStats, ExecutionError> {

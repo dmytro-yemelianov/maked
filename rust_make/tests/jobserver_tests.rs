@@ -132,3 +132,45 @@ fn test_makeyd_under_gnu_make_jobserver() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+/// A sub-make reached through `$(MAKE)` must run in parallel using the job
+/// slots inherited via MAKEFLAGS, not fall back to -j1 (Lua's
+/// `cd src && $(MAKE) macosx` regression).
+#[test]
+fn test_recursive_submake_inherits_parallelism() {
+    let makeyd = get_makeyd_bin();
+    let temp_dir = std::env::temp_dir().join(format!("makeyd_recursive_j_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    let sub = temp_dir.join("sub");
+    fs::create_dir_all(&sub).unwrap();
+
+    let mut f = File::create(sub.join("Makefile")).unwrap();
+    writeln!(f, "all: a b c d").unwrap();
+    for t in ["a", "b", "c", "d"] {
+        writeln!(f, "{t}:\n\tsleep 0.4").unwrap();
+    }
+    let mut f = File::create(temp_dir.join("Makefile")).unwrap();
+    writeln!(f, "all:\n\t$(MAKE) -C sub").unwrap();
+
+    let start = std::time::Instant::now();
+    let out = Command::new(&makeyd)
+        .arg("-C")
+        .arg(&temp_dir)
+        .arg("-j4")
+        .env_remove("MAKEFLAGS")
+        .output()
+        .expect("failed to run makeyd");
+    let elapsed = start.elapsed();
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    assert!(
+        out.status.success(),
+        "makeyd failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Serial would be 4 x 0.4s = 1.6s; four slots finish in ~0.4s.
+    assert!(
+        elapsed < std::time::Duration::from_millis(1100),
+        "sub-make ran serially: {elapsed:?}"
+    );
+}

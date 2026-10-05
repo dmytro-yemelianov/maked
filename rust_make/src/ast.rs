@@ -190,6 +190,23 @@ impl Makefile {
     }
 
     pub fn expand_prerequisites(&self, target: &str, raw_prereqs: &[String]) -> Vec<String> {
+        // Without vpath/VPATH, resolve_path can only return the name it was
+        // given, so skip its stat(2): get_rule runs several times per node.
+        if !self.has_vpath() {
+            if !self.has_second_expansion {
+                return raw_prereqs.to_vec();
+            }
+            let mut result = Vec::with_capacity(raw_prereqs.len());
+            for dep in raw_prereqs {
+                if dep.contains('$') {
+                    let expanded = crate::parser::expand_variables(dep, self, Some(target), &[]);
+                    result.extend(expanded.split_whitespace().map(str::to_string));
+                } else {
+                    result.push(dep.clone());
+                }
+            }
+            return result;
+        }
         let mut result = Vec::new();
         for dep in raw_prereqs {
             if self.has_second_expansion && dep.contains('$') {
@@ -206,6 +223,12 @@ impl Makefile {
             }
         }
         result
+    }
+
+    /// True when any `vpath` directive or a non-empty `VPATH` is in effect.
+    pub fn has_vpath(&self) -> bool {
+        !self.vpath_directives.is_empty()
+            || self.get_var("VPATH").is_some_and(|v| !v.trim().is_empty())
     }
 
     /// Resolves a file path using vpath directives and VPATH environment/Makefile variable

@@ -87,43 +87,54 @@ impl TraceCollector {
             }
         }
 
-        // Post-order dynamic programming to find longest latency path
-        let mut memo: HashMap<String, (u64, Vec<String>)> = HashMap::new();
-
-        fn dfs(
-            u: &str,
-            durations: &HashMap<String, u64>,
-            adj: &HashMap<String, Vec<String>>,
-            memo: &mut HashMap<String, (u64, Vec<String>)>,
-        ) -> (u64, Vec<String>) {
-            if let Some(res) = memo.get(u) {
-                return res.clone();
+        // Longest latency path by post-order DP. Iterative (explicit stack) so
+        // deep chains cannot overflow the thread stack, and each node stores
+        // only its best predecessor, so time and memory stay O(V + E).
+        let mut best: HashMap<&str, (u64, Option<&str>)> = HashMap::new();
+        let mut visiting: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut stack: Vec<(&str, bool)> = vec![(root, false)];
+        while let Some((u, expanded)) = stack.pop() {
+            if best.contains_key(u) {
+                continue;
             }
-
-            let my_dur = durations.get(u).copied().unwrap_or(0);
-            let prereqs = adj.get(u).cloned().unwrap_or_default();
-
-            let mut best_prereq_dur = 0u64;
-            let mut best_prereq_path = Vec::new();
-
-            for dep in &prereqs {
-                let (sub_dur, sub_path) = dfs(dep, durations, adj, memo);
-                if sub_dur > best_prereq_dur {
-                    best_prereq_dur = sub_dur;
-                    best_prereq_path = sub_path;
+            let prereqs = adj.get(u).map(Vec::as_slice).unwrap_or(&[]);
+            if !expanded {
+                if !visiting.insert(u) {
+                    continue;
+                }
+                stack.push((u, true));
+                for dep in prereqs {
+                    let dep = dep.as_str();
+                    if !best.contains_key(dep) && !visiting.contains(dep) {
+                        stack.push((dep, false));
+                    }
+                }
+                continue;
+            }
+            let mut best_dep: Option<&str> = None;
+            let mut best_dep_dur = 0u64;
+            for dep in prereqs {
+                // A dep still missing here is on a cycle; treat it as zero.
+                let d = best.get(dep.as_str()).map_or(0, |&(t, _)| t);
+                if d > best_dep_dur {
+                    best_dep_dur = d;
+                    best_dep = Some(dep.as_str());
                 }
             }
-
-            let mut path = best_prereq_path;
-            path.push(u.to_string());
-            let total = my_dur + best_prereq_dur;
-
-            let result = (total, path);
-            memo.insert(u.to_string(), result.clone());
-            result
+            let my_dur = durations.get(u).copied().unwrap_or(0);
+            best.insert(u, (my_dur + best_dep_dur, best_dep));
+            visiting.remove(u);
         }
 
-        dfs(root, &durations, adj, &mut memo)
+        let total = best.get(root).map_or(0, |&(t, _)| t);
+        let mut path = Vec::new();
+        let mut cur = Some(root);
+        while let Some(u) = cur {
+            path.push(u.to_string());
+            cur = best.get(u).and_then(|&(_, prev)| prev);
+        }
+        path.reverse();
+        (total, path)
     }
 
     /// Save Chrome Trace / Perfetto compatible JSON
@@ -243,5 +254,42 @@ mod tests {
         assert!(content.contains("\"name\": \"b\""));
 
         let _ = std::fs::remove_file(tmp_path);
+    }
+
+    #[test]
+    fn test_critical_path_terminates_on_cycle() {
+        let collector = TraceCollector::new();
+        let mut adj = HashMap::new();
+        adj.insert("a".to_string(), vec!["b".to_string()]);
+        adj.insert("b".to_string(), vec!["a".to_string()]);
+        let (_, path) = collector.compute_critical_path(&adj, "a");
+        assert_eq!(path.last().map(String::as_str), Some("a"));
+    }
+
+    #[test]
+    fn test_critical_path_deep_chain_is_linear_and_stack_safe() {
+        // n0 <- n1 <- ... <- n{N-1}; every node 1us. A recursive or
+        // path-copying implementation overflows or goes quadratic here.
+        const N: usize = 50_000;
+        let collector = TraceCollector::new();
+        let mut adj = HashMap::new();
+        for i in 0..N {
+            let name = format!("n{i}");
+            collector.record_complete(name.clone(), "rule", 0, 1, 1, 1, HashMap::new());
+            let deps = if i == 0 {
+                vec![]
+            } else {
+                vec![format!("n{}", i - 1)]
+            };
+            adj.insert(name, deps);
+        }
+        let (dur, path) = collector.compute_critical_path(&adj, &format!("n{}", N - 1));
+        assert_eq!(dur, N as u64);
+        assert_eq!(path.len(), N);
+        assert_eq!(path.first().map(String::as_str), Some("n0"));
+        assert_eq!(
+            path.last().map(String::as_str),
+            Some(&*format!("n{}", N - 1))
+        );
     }
 }

@@ -247,9 +247,43 @@ impl JobServer {
     }
 }
 
+/// Job count a sub-make should schedule with when it inherits a jobserver
+/// through MAKEFLAGS: the parent's `-jN`, or the host's parallelism when the
+/// parent passed only `--jobserver-auth` (the token pool still caps it).
+/// `None` when MAKEFLAGS carries no jobserver.
+pub fn inherited_jobs(makeflags: &str) -> Option<usize> {
+    let tokens: Vec<&str> = makeflags.split_whitespace().collect();
+    let has_jobserver = tokens
+        .iter()
+        .any(|t| t.starts_with("--jobserver-auth=") || t.starts_with("--jobserver-fds="));
+    if !has_jobserver {
+        return None;
+    }
+    let from_flag = tokens
+        .iter()
+        .filter_map(|t| t.strip_prefix("-j"))
+        .filter_map(|n| n.parse::<usize>().ok())
+        .next_back();
+    Some(from_flag.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+    }))
+    .map(|n| n.max(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_inherited_jobs_from_makeflags() {
+        assert_eq!(inherited_jobs(""), None);
+        assert_eq!(inherited_jobs("-j8"), None);
+        assert_eq!(inherited_jobs(" -j8 --jobserver-auth=fifo:/tmp/x"), Some(8));
+        assert_eq!(inherited_jobs("s -j3 --jobserver-auth=3,4"), Some(3));
+        assert!(inherited_jobs("--jobserver-fds=3,4").unwrap() >= 1);
+    }
 
     #[test]
     fn test_jobserver_single_threaded() {

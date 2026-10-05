@@ -120,7 +120,10 @@ impl TuiReporter {
         let bar = format!("[{}{}]", "=".repeat(filled), " ".repeat(empty));
 
         let mut buf = String::new();
-        buf.push_str("\r\x1b[K\x1b[1;36m┌─ makeyd v0.1.0 ─ Live Execution Dashboard ──────────────────────┐\x1b[0m\n");
+        buf.push_str(&format!(
+            "\r\x1b[K\x1b[1;36m┌─ makeyd v{:<6}─ Live Execution Dashboard ──────────────────────┐\x1b[0m\n",
+            env!("CARGO_PKG_VERSION")
+        ));
         buf.push_str(&format!(
             "\x1b[K│ \x1b[1mProgress:\x1b[0m \x1b[32m{}\x1b[0m {:>5.1}% ({}/{} targets) │\n",
             bar, pct, completed, total

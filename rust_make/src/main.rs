@@ -31,11 +31,28 @@ fn print_help() {
     );
 }
 
+/// Graph evaluation (cycle check, `doname`) recurses once per dependency
+/// level, and the default 8 MiB main stack overflows on chains a few
+/// thousand targets deep. Run on a thread with a large reserved stack; it is
+/// virtual memory, so only the depth actually used is committed.
+const MAIN_STACK_BYTES: usize = 256 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    std::thread::Builder::new()
+        .name("makeyd".to_string())
+        .stack_size(MAIN_STACK_BYTES)
+        .spawn(real_main)
+        .expect("failed to spawn main thread")
+        .join()
+        .unwrap_or(ExitCode::from(2))
+}
+
+fn real_main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     let mut makefile_path = "Makefile".to_string();
     let mut target_names: Vec<String> = Vec::new();
     let mut jobs = 1usize;
+    let mut jobs_explicit = false;
     let mut dry_run = false;
     let mut always_make = false;
     let mut silent = false;
@@ -66,7 +83,8 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         } else if arg == "-v" || arg == "--version" {
             println!(
-                "makeyd 0.1.0\nPOSIX IEEE Std 1003.1 conforming Make with Lean 4 formal semantics"
+                "makeyd {}\nPOSIX IEEE Std 1003.1 conforming Make with Lean 4 formal semantics",
+                env!("CARGO_PKG_VERSION")
             );
             return ExitCode::SUCCESS;
         } else if arg == "-b" || arg == "-m" {
@@ -87,6 +105,7 @@ fn main() -> ExitCode {
             i += 1;
             makefile_path = args[i].clone();
         } else if arg == "-j" {
+            jobs_explicit = true;
             if i + 1 < args.len()
                 && !args[i + 1].starts_with('-')
                 && args[i + 1].parse::<usize>().is_ok()
@@ -99,6 +118,7 @@ fn main() -> ExitCode {
                     .unwrap_or(4);
             }
         } else if arg.starts_with("-j") {
+            jobs_explicit = true;
             let num_str = &arg[2..];
             if num_str.is_empty() {
                 jobs = std::thread::available_parallelism()
@@ -307,6 +327,15 @@ fn main() -> ExitCode {
         if let Err(e) = graph.check_cycles(&makefile, tgt) {
             eprintln!("make: *** {e}");
             return ExitCode::from(2);
+        }
+    }
+
+    // A sub-make started through $(MAKE) gets its job slots from MAKEFLAGS,
+    // not argv; without this it would schedule at -j1 under a -jN parent.
+    if !jobs_explicit {
+        let mf = env::var("MAKEFLAGS").unwrap_or_default();
+        if let Some(n) = makeyd::jobserver::inherited_jobs(&mf) {
+            jobs = n;
         }
     }
 
