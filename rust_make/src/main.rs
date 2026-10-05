@@ -79,6 +79,7 @@ fn real_main() -> ExitCode {
     let mut use_hash = false;
     let mut profile = false;
     let mut ignore_errors = false;
+    let mut keep_going = false;
     let mut touch_only = false;
     let mut env_overrides = false;
     let mut print_database = false;
@@ -114,7 +115,7 @@ fn real_main() -> ExitCode {
         } else if arg == "-i" || arg == "--ignore-errors" {
             ignore_errors = true;
         } else if arg == "-k" || arg == "--keep-going" {
-            // Keep going on errors (POSIX compatibility)
+            keep_going = true;
         } else if arg == "-p" || arg == "--print-data-base" {
             print_database = true;
         } else if arg == "-t" || arg == "--touch" {
@@ -254,6 +255,7 @@ fn real_main() -> ExitCode {
             (always_make, 'B'),
             (env_overrides, 'e'),
             (ignore_errors, 'i'),
+            (keep_going, 'k'),
             (dry_run, 'n'),
             (question, 'q'),
             (silent, 's'),
@@ -380,6 +382,7 @@ fn real_main() -> ExitCode {
             let before = mtimes(&candidates);
             let remake_config = ExecutionConfig {
                 jobs: 1,
+                keep_going: false,
                 dry_run: false,
                 always_make: false,
                 silent,
@@ -515,6 +518,7 @@ fn real_main() -> ExitCode {
 
     let config = ExecutionConfig {
         jobs,
+        keep_going,
         dry_run,
         always_make,
         silent,

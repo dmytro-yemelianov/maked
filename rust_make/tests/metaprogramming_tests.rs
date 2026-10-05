@@ -5,6 +5,7 @@ use std::fs;
 
 fn make_config() -> ExecutionConfig {
     ExecutionConfig {
+        keep_going: false,
         jobs: 2,
         dry_run: false,
         always_make: true,

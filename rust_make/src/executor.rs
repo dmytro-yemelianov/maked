@@ -14,6 +14,8 @@ use std::time::{Instant, SystemTime};
 #[derive(Debug, Clone, Default)]
 pub struct ExecutionConfig {
     pub jobs: usize,
+    /// `-k`: after a failure, keep building what does not depend on it.
+    pub keep_going: bool,
     pub dry_run: bool,
     pub always_make: bool,
     pub silent: bool,
@@ -423,6 +425,10 @@ impl<'a> Executor<'a> {
 
         let status = self.doname(root, &mut target_statuses, &mut stats)?;
         if matches!(status, TargetStatus::Failed) {
+            self.save_duration_log();
+            if self.config.keep_going {
+                eprintln!("make: Target '{root}' not remade because of errors.");
+            }
             return Err(ExecutionError::BuildFailed(root.to_string(), 1));
         }
         if self.config.use_hash && !self.config.dry_run {
@@ -478,13 +484,27 @@ impl<'a> Executor<'a> {
         let mut any_dep_rebuilt = false;
         let mut newest_dep_mtime: Option<SystemTime> = None;
 
+        let mut any_dep_failed = false;
         for dep in &rule.prereqs {
-            let dep_status = self.doname(dep, statuses, stats)?;
+            let dep_status = match self.doname(dep, statuses, stats) {
+                Ok(st) => st,
+                Err(e) if self.config.keep_going => {
+                    eprintln!("{e}");
+                    statuses.insert(dep.to_string(), TargetStatus::Failed);
+                    TargetStatus::Failed
+                }
+                Err(e) => return Err(e),
+            };
             if cached_mtime(dep).is_none() && self.makefile.resolve_path(dep).is_none() {
                 any_dep_rebuilt = true;
             }
             match dep_status {
                 TargetStatus::Failed => {
+                    if self.config.keep_going {
+                        // -k: still bring the other prerequisites up to date.
+                        any_dep_failed = true;
+                        continue;
+                    }
                     statuses.insert(target.to_string(), TargetStatus::Failed);
                     return Ok(TargetStatus::Failed);
                 }
@@ -501,6 +521,11 @@ impl<'a> Executor<'a> {
                 }
                 TargetStatus::UpToDate(None) => {}
             }
+        }
+
+        if any_dep_failed {
+            statuses.insert(target.to_string(), TargetStatus::Failed);
+            return Ok(TargetStatus::Failed);
         }
 
         let all_cmds = rule.commands.join("\n");
@@ -644,10 +669,12 @@ impl<'a> Executor<'a> {
                                 if !status.success() && !ignore_err {
                                     let code = status.code().unwrap_or(1);
                                     statuses.insert(target.to_string(), TargetStatus::Failed);
-                                    return Err(ExecutionError::BuildFailed(
-                                        target.to_string(),
-                                        code,
-                                    ));
+                                    let err = ExecutionError::BuildFailed(target.to_string(), code);
+                                    if self.config.keep_going {
+                                        eprintln!("{err}");
+                                        return Ok(TargetStatus::Failed);
+                                    }
+                                    return Err(err);
                                 }
                             }
                             stats.commands_executed += 1;
@@ -1077,23 +1104,39 @@ impl<'a> Executor<'a> {
                                                         if !out.status.success() && !ignore_err {
                                                             let code =
                                                                 out.status.code().unwrap_or(1);
-                                                            *failed_error_clone.lock().unwrap() =
-                                                                Some(ExecutionError::BuildFailed(
-                                                                    task.clone(),
-                                                                    code,
-                                                                ));
-                                                            abort_flag_clone
-                                                                .store(true, Ordering::Relaxed);
+                                                            let err = ExecutionError::BuildFailed(
+                                                                task.clone(),
+                                                                code,
+                                                            );
+                                                            if config.keep_going {
+                                                                eprintln!("{err}");
+                                                            } else {
+                                                                *failed_error_clone
+                                                                    .lock()
+                                                                    .unwrap() = Some(err);
+                                                                abort_flag_clone
+                                                                    .store(true, Ordering::Relaxed);
+                                                            }
                                                             build_failed = true;
                                                             break;
                                                         }
                                                     }
                                                     Err(e) => {
                                                         if !ignore_err {
-                                                            *failed_error_clone.lock().unwrap() =
-                                                                Some(ExecutionError::CommandSpawnFailed(cmd, e.to_string()));
-                                                            abort_flag_clone
-                                                                .store(true, Ordering::Relaxed);
+                                                            let err =
+                                                                ExecutionError::CommandSpawnFailed(
+                                                                    cmd,
+                                                                    e.to_string(),
+                                                                );
+                                                            if config.keep_going {
+                                                                eprintln!("{err}");
+                                                            } else {
+                                                                *failed_error_clone
+                                                                    .lock()
+                                                                    .unwrap() = Some(err);
+                                                                abort_flag_clone
+                                                                    .store(true, Ordering::Relaxed);
+                                                            }
                                                             build_failed = true;
                                                             break;
                                                         }
@@ -1224,6 +1267,7 @@ impl<'a> Executor<'a> {
         }
 
         let mut remaining_targets = reachable.len();
+        let mut any_failed = false;
 
         while remaining_targets > 0 {
             while idle_workers > 0 {
@@ -1256,7 +1300,9 @@ impl<'a> Executor<'a> {
                             num_rebuilt.fetch_add(1, Ordering::Relaxed);
                         }
                         TargetStatus::Failed => {
-                            abort_flag.store(true, Ordering::Relaxed);
+                            if !self.config.keep_going {
+                                abort_flag.store(true, Ordering::Relaxed);
+                            }
                         }
                         TargetStatus::UpToDate(_) => {}
                     }
@@ -1267,6 +1313,23 @@ impl<'a> Executor<'a> {
                         .insert(finished_node.clone(), status.clone());
 
                     remaining_targets -= 1;
+
+                    // -k: nothing that depends on a failed target can be made;
+                    // count those as finished (failed) so the build can end.
+                    if matches!(status, TargetStatus::Failed) && self.config.keep_going {
+                        any_failed = true;
+                        let mut stack = vec![finished_node.clone()];
+                        let mut statuses = target_statuses.lock().unwrap();
+                        while let Some(n) = stack.pop() {
+                            for d in dependents.get(&n).map(Vec::as_slice).unwrap_or(&[]) {
+                                if !statuses.contains_key(d) {
+                                    statuses.insert(d.clone(), TargetStatus::Failed);
+                                    remaining_targets -= 1;
+                                    stack.push(d.clone());
+                                }
+                            }
+                        }
+                    }
                     let (status_str, was_cached) = match &status {
                         TargetStatus::Rebuilt(_) => ("rebuilt", false),
                         TargetStatus::UpToDate(_) => ("up_to_date", false),
@@ -1312,6 +1375,11 @@ impl<'a> Executor<'a> {
 
         if let Some(err) = failed_error.lock().unwrap().take() {
             return Err(err);
+        }
+        if any_failed {
+            self.save_duration_log();
+            eprintln!("make: Target '{root}' not remade because of errors.");
+            return Err(ExecutionError::BuildFailed(root.to_string(), 1));
         }
 
         let rebuilt = num_rebuilt.load(Ordering::Relaxed);

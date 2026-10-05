@@ -80,7 +80,6 @@ Known differences from GNU make:
 - `$(flavor)` guesses: a value containing `$` is reported as recursive.
 - `$(eval)` during the build applies only variable assignments. New rules
   can only come from `$(eval)` while the makefile is read.
-- `-k` (keep going) is accepted but stops at the first error.
 - A backslash-newline in a recipe is joined into one line before reaching
   the shell.
 

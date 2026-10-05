@@ -541,3 +541,14 @@ fn touch_flag_updates_existing_targets() {
         &["-t"],
     );
 }
+
+#[test]
+fn keep_going_builds_what_does_not_depend_on_a_failure() {
+    let files = [(
+        "Makefile",
+        "all: bad dependent good\nbad:\n\t@false\ndependent: bad\n\t@echo never\ngood:\n\t@echo good\n",
+    )];
+    assert_same(&files, &["-k"]);
+    assert_same(&files, &["-k", "-j4"]);
+    assert_same(&files, &[]);
+}

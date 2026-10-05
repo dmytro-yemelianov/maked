@@ -6,6 +6,7 @@ use std::process::Command;
 
 fn make_config(jobs: usize) -> ExecutionConfig {
     ExecutionConfig {
+        keep_going: false,
         jobs,
         dry_run: false,
         always_make: false,

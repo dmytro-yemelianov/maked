@@ -461,8 +461,8 @@ microcontrollers would be a different product.
 - `.maked_log` is a new file in the build directory. Add it to
   `.gitignore`.
 - The approximations listed under *Compatibility* in the README: merged
-  double-colon rules, order-only prerequisites, `$(flavor)`, `$(eval)`
-  during the build, and `-k`.
+  double-colon rules, order-only prerequisites, `$(flavor)` and `$(eval)`
+  during the build.
 
 The code, the benchmark harness and its raw JSON are all in the repository:
 <https://github.com/dmytro-yemelianov/maked>.

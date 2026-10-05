@@ -282,6 +282,7 @@ step2: step1
     let mf = parse_makefile_content(content, &[]).expect("parse failed");
     let graph = DependencyGraph::from_makefile(&mf);
     let config = ExecutionConfig {
+        keep_going: false,
         jobs: 2,
         dry_run: true,
         always_make: true,
