@@ -282,7 +282,10 @@ needs a worker.
 - **A remaking-makefiles fuzzer** (`remake_fuzz.py`): included makefiles
   with rules, present or missing, with `FORCE`, restarting make. It compares
   every recipe that ran with GNU make, and checks the runtime form of
-  `no_recipe_runs_twice`. 200/200.
+  `no_recipe_runs_twice`. 200/200 against GNU make 4.4. GNU make 4.3 (on
+  CI) sometimes does not re-read the makefiles after creating an include
+  that was missing, so there those cases are checked for run-once only,
+  and reported as not compared.
 - **A complexity guard** (`benchmarks/scaling/scaling_check.py`): each of
   seven makefile shapes at size N and 4N; more than 7× the time fails.
 
