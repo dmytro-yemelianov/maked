@@ -142,6 +142,44 @@ pub fn match_main_thread_qos() {
     }
 }
 
+/// mtimes of prerequisites during a build. A header listed by 500 objects
+/// was stat'ed 500 times; GNU make stats each file once. An entry is
+/// dropped when a recipe for that target finishes, and dependents only look
+/// at a prerequisite after it has finished, so a cached value is never
+/// stale when it is read.
+static MTIMES: std::sync::OnceLock<Mutex<HashMap<String, Option<SystemTime>>>> =
+    std::sync::OnceLock::new();
+
+/// `-t`: create the file if needed and set its mtime to now (opening it, as
+/// before, left an existing file's mtime unchanged).
+fn touch_file(path: &str) {
+    if let Ok(f) = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+    {
+        let _ = f.set_modified(SystemTime::now());
+    }
+    forget_mtime(path);
+}
+
+fn cached_mtime(path: &str) -> Option<SystemTime> {
+    let cache = MTIMES.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(v) = cache.lock().unwrap().get(path) {
+        return *v;
+    }
+    let v = get_file_mtime(path);
+    cache.lock().unwrap().insert(path.to_string(), v);
+    v
+}
+
+fn forget_mtime(path: &str) {
+    if let Some(cache) = MTIMES.get() {
+        cache.lock().unwrap().remove(path);
+    }
+}
+
 static PROCESS_ENV: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 static PROGRAM_PATHS: std::sync::OnceLock<Mutex<HashMap<(String, String), String>>> =
     std::sync::OnceLock::new();
@@ -442,7 +480,7 @@ impl<'a> Executor<'a> {
 
         for dep in &rule.prereqs {
             let dep_status = self.doname(dep, statuses, stats)?;
-            if get_file_mtime(dep).is_none() && self.makefile.resolve_path(dep).is_none() {
+            if cached_mtime(dep).is_none() && self.makefile.resolve_path(dep).is_none() {
                 any_dep_rebuilt = true;
             }
             match dep_status {
@@ -497,11 +535,11 @@ impl<'a> Executor<'a> {
                 }
 
                 if self.config.touch_only {
-                    let _ = std::fs::OpenOptions::new()
-                        .create(true)
-                        .write(true)
-                        .truncate(false)
-                        .open(target);
+                    if !self.config.silent {
+                        println!("touch {target}");
+                    }
+                    touch_file(target);
+                    stats.commands_executed += 1;
                     stats.targets_rebuilt += 1;
                     return Ok(TargetStatus::Rebuilt(SystemTime::now()));
                 }
@@ -644,6 +682,7 @@ impl<'a> Executor<'a> {
                 }
 
                 stats.targets_rebuilt += 1;
+                forget_mtime(target);
                 let mtime_after = get_file_mtime(target);
                 // A recipe that left an existing file untouched (automake's
                 // `config.h: stamp-h1`) does not make dependents stale; GNU
@@ -814,8 +853,7 @@ impl<'a> Executor<'a> {
                     {
                         let statuses = target_statuses_clone.lock().unwrap();
                         for dep in &rule.prereqs {
-                            if get_file_mtime(dep).is_none() && makefile.resolve_path(dep).is_none()
-                            {
+                            if cached_mtime(dep).is_none() && makefile.resolve_path(dep).is_none() {
                                 any_dep_rebuilt = true;
                             }
                             if let Some(status) = statuses.get(dep) {
@@ -898,11 +936,11 @@ impl<'a> Executor<'a> {
                             rule_start = Instant::now();
 
                             if config.touch_only {
-                                let _ = std::fs::OpenOptions::new()
-                                    .create(true)
-                                    .write(true)
-                                    .truncate(false)
-                                    .open(&task);
+                                if !config.silent {
+                                    output_lines.push(format!("touch {task}"));
+                                }
+                                touch_file(&task);
+                                num_commands_clone.fetch_add(1, Ordering::Relaxed);
                             } else {
                                 let mut restored_from_cache = false;
                                 let cache_key = if config.cache && !config.dry_run {
@@ -1100,6 +1138,7 @@ impl<'a> Executor<'a> {
                                         },
                                     );
                                 }
+                                forget_mtime(&task);
                                 let mtime_after = get_file_mtime(&task);
                                 match (mtime_before, mtime_after) {
                                     (Some(b), Some(a))
@@ -1339,7 +1378,7 @@ impl<'a> Executor<'a> {
         let mut any_dep_rebuilt = false;
         let mut newest_dep_mtime: Option<SystemTime> = None;
         for dep in &rule.prereqs {
-            if get_file_mtime(dep).is_none() && self.makefile.resolve_path(dep).is_none() {
+            if cached_mtime(dep).is_none() && self.makefile.resolve_path(dep).is_none() {
                 any_dep_rebuilt = true;
             }
             match statuses.get(dep) {

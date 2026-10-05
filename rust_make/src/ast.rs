@@ -51,6 +51,12 @@ pub struct Makefile {
     pub included: Vec<String>,
     /// `include`d files that did not exist: (name, optional, line).
     pub missing_includes: Vec<(String, bool, usize)>,
+    /// `get_rule` results during the build. Implicit-rule search stats every
+    /// candidate prerequisite, and the executor asks for the same target
+    /// several times (git: 116k stat calls for a null build against GNU
+    /// make's 16k). GNU make also searches once per target per run. Shared
+    /// by clones; used only in the execution phase, when rules are fixed.
+    pub rule_cache: Arc<Mutex<HashMap<String, Option<Rule>>>>,
 }
 
 // `$(eval NAME := value)` met while expanding recipes: the makefile is
@@ -117,6 +123,7 @@ impl Makefile {
             defaults: HashSet::new(),
             included: Vec::new(),
             missing_includes: Vec::new(),
+            rule_cache: Arc::new(Mutex::new(HashMap::new())),
             target_variables: HashMap::new(),
             has_second_expansion: false,
             eval_queue: Arc::new(Mutex::new(Vec::new())),
@@ -432,6 +439,26 @@ impl Makefile {
 
     /// Try to find an explicit rule or synthesize one from pattern rules (e.g. %.o: %.c)
     pub fn get_rule(&self, target: &str) -> Option<Rule> {
+        if !in_execution_phase() {
+            return self.find_rule(target);
+        }
+        if let Some(hit) = self.rule_cache.lock().unwrap().get(target) {
+            return hit.clone();
+        }
+        let found = self.find_rule(target);
+        self.rule_cache
+            .lock()
+            .unwrap()
+            .insert(target.to_string(), found.clone());
+        found
+    }
+
+    /// Forget cached `get_rule` results (after rules change).
+    pub fn clear_rule_cache(&self) {
+        self.rule_cache.lock().unwrap().clear();
+    }
+
+    fn find_rule(&self, target: &str) -> Option<Rule> {
         let explicit = self.rules.get(target);
         if let Some(r) = explicit {
             if !r.commands.is_empty() {

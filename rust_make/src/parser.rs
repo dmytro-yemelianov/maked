@@ -54,6 +54,10 @@ fn expand_variables_internal(
     scoped_vars: Option<&HashMap<String, String>>,
     depth: &mut usize,
 ) -> String {
+    // Most fragments (words, file names, flags) have nothing to expand.
+    if !text.contains('$') {
+        return text.to_string();
+    }
     if *depth > 100 {
         return text.to_string();
     }

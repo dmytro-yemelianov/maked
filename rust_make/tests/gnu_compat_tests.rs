@@ -526,3 +526,18 @@ fn backslash_newline_in_variables_and_recipes() {
         &[],
     );
 }
+
+#[test]
+fn touch_flag_updates_existing_targets() {
+    // -t must bump `out` past `src`; a second run then has nothing to do.
+    let files = [
+        ("src", ""),
+        ("out", ""),
+        ("Makefile", "out: src\n\t@echo should-not-run\n"),
+    ];
+    assert_same_after(
+        &files,
+        "touch -t 202001010000 out && touch -t 202001010001 src",
+        &["-t"],
+    );
+}

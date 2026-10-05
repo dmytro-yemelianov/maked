@@ -567,6 +567,7 @@ fn real_main() -> ExitCode {
                 line_number: 0,
             },
         );
+        makefile.clear_rule_cache();
         vec![GOALS_ROOT.to_string()]
     } else {
         unique_goals.clone()
