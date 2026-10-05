@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -92,12 +93,16 @@ def main():
         rng = random.Random(seed)
         mf, files, margs, env = case(rng)
         res = {}
+        stamp = int(time.time()) - 100
         with tempfile.TemporaryDirectory(prefix="maked_opt_") as tmp:
             for name, binary in (("gmake", GMAKE), ("maked", str(MAKED))):
                 d = Path(tmp) / name
                 d.mkdir()
                 for f, body in files.items():
                     (d / f).write_text(body)
+                    # The same mtime in both trees: writing them in turn can
+                    # straddle a filesystem clock tick in one tree only.
+                    os.utime(d / f, (stamp, stamp))
                 (d / "Makefile").write_text(mf)
                 res[name] = run(binary, d, margs, env)
         if res["gmake"] == res["maked"]:

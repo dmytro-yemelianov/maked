@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -122,6 +123,7 @@ def main():
     for seed in range(1, n + 1):
         mf, files, cli = case(seed)
         res = {}
+        stamp = int(time.time()) - 100
         with tempfile.TemporaryDirectory(prefix="maked_dir_") as tmp:
             for name, binary in (("gmake", GMAKE), ("maked", str(MAKED))):
                 d = Path(tmp) / name
@@ -129,6 +131,7 @@ def main():
                 for f, body in files.items():
                     (d / f).parent.mkdir(parents=True, exist_ok=True)
                     (d / f).write_text(body)
+                    os.utime(d / f, (stamp, stamp))  # same in both trees
                 (d / "Makefile").write_text(mf)
                 res[name] = run(binary, d, cli)
         if res["gmake"] == res["maked"]:
