@@ -22,10 +22,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Toolchain PATH
-        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Build maked
         run: cargo build --release --manifest-path rust_make/Cargo.toml
+
+      - name: Build the Lean model (checks maked's recorded decisions)
+        run: cd lean_make && lake build
 
       - name: Tarball cache
         uses: actions/cache@v4
@@ -33,7 +38,9 @@ jobs:
           path: benchmarks/realworld/.cache
           key: realworld-tarballs-v1
 
-      - name: Build real projects with maked and GNU make
+      - name: Build real projects with maked and GNU make; check maked's decisions with Lean
+        env:
+          REQUIRE_DECISION_CHECK: "1"
         run: python3 benchmarks/realworld/run.py
 
       - name: Logs

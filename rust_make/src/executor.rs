@@ -658,9 +658,25 @@ impl<'a> Executor<'a> {
         if let Some(status) = statuses.get(target) {
             return Ok(status.clone());
         }
+        crate::decisions::note_before(target);
         let status = self.doname_once(target, statuses, stats)?;
         statuses.insert(target.to_string(), status.clone());
+        self.record_decision(target, &status);
         Ok(status)
+    }
+
+    /// For `MAKED_DECISIONS` (see `crate::decisions`).
+    fn record_decision(&self, target: &str, status: &TargetStatus) {
+        if !crate::decisions::enabled() {
+            return;
+        }
+        let (c, t) = match status {
+            TargetStatus::Rebuilt(t) => ('R', Some(*t)),
+            TargetStatus::UpToDate(t) => ('U', *t),
+            TargetStatus::Failed => ('F', None),
+        };
+        let rule = self.makefile.get_rule(target);
+        crate::decisions::record(target, rule.as_deref(), c, t);
     }
 
     fn doname_once(
@@ -800,6 +816,7 @@ impl<'a> Executor<'a> {
                     out.iter().for_each(|l| println!("{l}"));
                     if did {
                         self.ran.lock().unwrap().push(target.to_string());
+                        crate::decisions::mark_ran(target);
                         stats.commands_executed += 1;
                     }
                     stats.targets_rebuilt += 1;
@@ -890,6 +907,7 @@ impl<'a> Executor<'a> {
                                 let mut ran = self.ran.lock().unwrap();
                                 if ran.last().map(String::as_str) != Some(target) {
                                     ran.push(target.to_string());
+                                    crate::decisions::mark_ran(target);
                                 }
                             }
                             let cmd = cmd.to_string();
@@ -1244,6 +1262,7 @@ impl<'a> Executor<'a> {
                                         ) {
                                             Ok(true) => {
                                                 ran_clone.lock().unwrap().push(task.clone());
+                                                crate::decisions::mark_ran(&task);
                                                 num_commands_clone.fetch_add(1, Ordering::Relaxed);
                                             }
                                             Ok(false) => {}
@@ -1361,6 +1380,7 @@ impl<'a> Executor<'a> {
                                                     let mut ran = ran_clone.lock().unwrap();
                                                     if !ran.iter().rev().take(8).any(|t| t == &task) {
                                                         ran.push(task.clone());
+                                                        crate::decisions::mark_ran(&task);
                                                     }
                                                 }
                                                 let cmd = cmd.to_string();
@@ -1577,6 +1597,7 @@ impl<'a> Executor<'a> {
             // null build's cost.
             let mut settled: VecDeque<(String, TargetStatus, Vec<String>)> = VecDeque::new();
             for task in ready_queue.drain(..) {
+                crate::decisions::note_before(&task);
                 let pre = self.settle_inline(&task, &target_statuses.lock().unwrap());
                 match pre {
                     Some(status) => settled.push_back((task, status, Vec::new())),
@@ -1625,10 +1646,16 @@ impl<'a> Executor<'a> {
                             TargetStatus::UpToDate(_) => {}
                         }
 
-                        target_statuses
+                        // A target settled before this run (remaking the
+                        // makefiles) is recorded once, then.
+                        let was_settled = target_statuses
                             .lock()
                             .unwrap()
-                            .insert(finished_node.clone(), status.clone());
+                            .insert(finished_node.clone(), status.clone())
+                            .is_some();
+                        if !was_settled {
+                            self.record_decision(&finished_node, &status);
+                        }
 
                         remaining_targets -= 1;
 
@@ -1642,6 +1669,7 @@ impl<'a> Executor<'a> {
                                 for d in dependents.get(&n).map(Vec::as_slice).unwrap_or(&[]) {
                                     if !statuses.contains_key(d) {
                                         statuses.insert(d.clone(), TargetStatus::Failed);
+                                        self.record_decision(d, &TargetStatus::Failed);
                                         remaining_targets -= 1;
                                         stack.push(d.clone());
                                     }
@@ -1664,6 +1692,7 @@ impl<'a> Executor<'a> {
                                     if let Some(deg) = in_degrees.get_mut(dep) {
                                         *deg = deg.saturating_sub(1);
                                         if *deg == 0 {
+                                            crate::decisions::note_before(dep);
                                             let pre = self.settle_inline(
                                                 dep,
                                                 &target_statuses.lock().unwrap(),

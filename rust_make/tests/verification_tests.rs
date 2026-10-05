@@ -228,7 +228,8 @@ fn test_freshness_high_resolution_subsecond() {
         FreshnessDecision::NeedsRebuild(RebuildReason::TargetMissing)
     );
 
-    // Target missing but with NO commands and no rebuilt prereqs acts as alias -> UpToDate
+    // A missing target without a recipe is remade too (GNU make, and
+    // `needsRebuild` in the Lean model): its dependents count it as rebuilt.
     let alias_rule = Rule {
         target: "alias".into(),
         prereqs: vec!["dep".into()],
@@ -237,7 +238,10 @@ fn test_freshness_high_resolution_subsecond() {
         line_number: 1,
     };
     let dec_alias = evaluate_freshness(&alias_rule, false, false, Some(later));
-    assert_eq!(dec_alias, FreshnessDecision::UpToDate(later));
+    assert_eq!(
+        dec_alias,
+        FreshnessDecision::NeedsRebuild(RebuildReason::TargetMissing)
+    );
 }
 
 #[test]
@@ -263,10 +267,10 @@ fn test_phony_freshness() {
         line_number: 1,
     };
     let dep_time = SystemTime::now();
-    // Phony alias with no commands and no rebuilt prereqs inherits newest prereq time
+    // A phony target without a recipe is remade too (GNU make).
     assert_eq!(
         evaluate_freshness(&rule_alias, false, false, Some(dep_time)),
-        FreshnessDecision::UpToDate(dep_time)
+        FreshnessDecision::NeedsRebuild(RebuildReason::PhonyTarget)
     );
 }
 

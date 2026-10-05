@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod cache;
 pub mod compdb;
+pub mod decisions;
 pub mod distributed;
 pub mod executor;
 pub mod freshness;

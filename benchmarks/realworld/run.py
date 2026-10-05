@@ -31,6 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / "benchmarks/realworld/.cache"
 MAKED = Path(os.environ.get("MAKED_BIN", ROOT / "rust_make/target/release/maked"))
+LEAN = ROOT / "lean_make/.lake/build/bin/lean_make"
 GMAKE = shutil.which("gmake") or shutil.which("make")
 JOBS = "-j8"
 IS_MAC = platform.system() == "Darwin"
@@ -139,15 +140,30 @@ def changed(before, after):
     return sorted(k for k, v in after.items() if before.get(k) != v)
 
 
-def run(cmd, cwd, log):
+def run(cmd, cwd, log, env=None):
     t0 = time.monotonic()
     try:
-        r = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        r = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                           env={**os.environ, **env} if env else None)
     except OSError as e:
         log.write(f"$ {' '.join(map(str, cmd))}\n{e}\n")
         return 127, time.monotonic() - t0, str(e)
     log.write(f"$ {' '.join(map(str, cmd))}\n{r.stdout}\n")
     return r.returncode, time.monotonic() - t0, r.stdout
+
+
+def check_decisions(record_dir, log):
+    """maked's recorded decisions, checked by the Lean model (see
+    rust_make/src/decisions.rs): (passed, summary line)."""
+    files = sorted(str(p) for p in Path(record_dir).glob("*.txt"))
+    if not LEAN.exists():
+        return None, "not checked: lean_make not built"
+    if not files:
+        return False, "no decisions recorded"
+    r = subprocess.run([str(LEAN), "--check-decisions", *files], capture_output=True, text=True)
+    log.write(f"$ lean_make --check-decisions ({len(files)} files)\n{r.stdout}\n")
+    summary = (r.stdout.strip().splitlines() or ["(no output)"])[-1]
+    return r.returncode == 0, summary
 
 
 def build_with(tool, name, spec, work, logdir):
@@ -160,8 +176,25 @@ def build_with(tool, name, spec, work, logdir):
         if rc != 0:
             res["error"] = "configure failed"
             return res
+    is_maked = Path(tool).name == "maked"
+    decisions = {}
+
+    def phase_env(phase):
+        """Under maked, record its decisions for this phase."""
+        if not is_maked:
+            return None
+        d = work / f"decisions-{phase}"
+        d.mkdir(exist_ok=True)
+        return {"MAKED_DECISIONS": str(d)}
+
+    def check(phase):
+        if is_maked:
+            decisions[phase] = check_decisions(work / f"decisions-{phase}", log)
+            res["decisions"] = decisions
+
     pristine = snapshot(tree)
-    rc, secs, _ = run(env_tool + [JOBS] + spec["args"], tree, log)
+    rc, secs, _ = run(env_tool + [JOBS] + spec["args"], tree, log, phase_env("build"))
+    check("build")
     res["build_ok"] = rc == 0
     res["build_seconds"] = round(secs, 2)
     built = snapshot(tree)
@@ -173,7 +206,8 @@ def build_with(tool, name, spec, work, logdir):
 
     time.sleep(1.1)  # make every later write visibly newer than the build
     before = snapshot(tree)
-    rc, secs, _ = run(env_tool + [JOBS] + spec["args"], tree, log)
+    rc, secs, _ = run(env_tool + [JOBS] + spec["args"], tree, log, phase_env("null"))
+    check("null")
     res["null_ok"] = rc == 0
     res["null_seconds"] = round(secs, 2)
     res["null_changed"] = changed(before, snapshot(tree))
@@ -181,7 +215,8 @@ def build_with(tool, name, spec, work, logdir):
     time.sleep(1.1)
     (tree / spec["touch"]).touch()
     before = snapshot(tree)
-    rc, secs, _ = run(env_tool + [JOBS] + spec["args"], tree, log)
+    rc, secs, _ = run(env_tool + [JOBS] + spec["args"], tree, log, phase_env("incr"))
+    check("incr")
     res["incr_ok"] = rc == 0
     res["incr_seconds"] = round(secs, 2)
     res["incr_changed"] = changed(before, snapshot(tree))
@@ -231,6 +266,10 @@ def main():
             only_m = sorted(set(m.get("produced", [])) - set(g.get("produced", [])))
             only_g = sorted(set(g.get("produced", [])) - set(m.get("produced", [])))
             problems.append(f"produced files differ: only maked {only_m[:5]}, only GNU {only_g[:5]}")
+        for phase, (ok, summary) in m.get("decisions", {}).items():
+            # In CI an unchecked phase is a failure, not a pass.
+            if ok is False or (ok is None and os.environ.get("REQUIRE_DECISION_CHECK")):
+                problems.append(f"Lean model disagrees with maked's decisions ({phase}): {summary}")
         if set(m.get("incr_changed", [])) != set(g.get("incr_changed", [])):
             only_m = sorted(set(m.get("incr_changed", [])) - set(g.get("incr_changed", [])))
             only_g = sorted(set(g.get("incr_changed", [])) - set(m.get("incr_changed", [])))
@@ -240,6 +279,8 @@ def main():
                   f"smoke={r.get('smoke_ok')} null {r.get('null_seconds', '-')}s "
                   f"({len(r.get('null_changed', []))} changed) "
                   f"incr {r.get('incr_seconds', '-')}s ({len(r.get('incr_changed', []))} changed)")
+        for phase, (ok, summary) in m.get("decisions", {}).items():
+            print(f"    decisions {phase:5}: {summary}")
         for p in problems:
             print(f"    [-] {p}")
         if not problems:

@@ -99,6 +99,11 @@ Known differences from GNU make:
   it only loses that ordering hint. Add it to `.gitignore`.
 - `.maked.db` is written only with `--hash`, and `.maked_cache/` only with
   `--cache`.
+- With `MAKED_DECISIONS=DIR` set, each make process (sub-makes included)
+  writes `DIR/<pid>.txt`: for every target it settled, what the decision was
+  based on and what maked did. `lean_make --check-decisions DIR/*.txt`
+  checks each decision against the Lean model. CI does this for every phase
+  of the real-project builds.
 
 ## Remote workers: security
 

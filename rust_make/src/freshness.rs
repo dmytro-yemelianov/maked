@@ -75,32 +75,14 @@ pub fn evaluate_freshness_with(
         return FreshnessDecision::NeedsRebuild(RebuildReason::AlwaysMakeFlag);
     }
 
+    // A phony or missing target is always remade, with or without a recipe
+    // (GNU make; `needsRebuild` in lean_make/LeanMake/Semantics.lean). Its
+    // dependents then count it as rebuilt: that is how `FORCE:` works.
     if rule.is_phony {
-        if let (true, false, Some(t)) = (
-            rule.commands.is_empty(),
-            rebuilt_prereqs,
-            newest_prereq_time,
-        ) {
-            return FreshnessDecision::UpToDate(t);
-        }
         return FreshnessDecision::NeedsRebuild(RebuildReason::PhonyTarget);
     }
-
-    let target_mtime = match target_mtime {
-        Some(t) => t,
-        None => {
-            // POSIX Alias Rule: If target has no commands and no file on disk,
-            // it acts as a virtual group/alias. If prerequisites are all up to date,
-            // the alias target inherits the newest prerequisite timestamp and is UP TO DATE!
-            if let (true, false, Some(t)) = (
-                rule.commands.is_empty(),
-                rebuilt_prereqs,
-                newest_prereq_time,
-            ) {
-                return FreshnessDecision::UpToDate(t);
-            }
-            return FreshnessDecision::NeedsRebuild(RebuildReason::TargetMissing);
-        }
+    let Some(target_mtime) = target_mtime else {
+        return FreshnessDecision::NeedsRebuild(RebuildReason::TargetMissing);
     };
 
     if rebuilt_prereqs {

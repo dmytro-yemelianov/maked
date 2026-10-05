@@ -50,6 +50,10 @@ fn main() -> ExitCode {
         })
         .expect("failed to spawn main thread")
         .join()
+        .map(|c| {
+            maked::decisions::flush();
+            c
+        })
         .unwrap_or(ExitCode::from(2))
 }
 
@@ -384,6 +388,11 @@ fn real_main() -> ExitCode {
     maked::ast::enter_execution_phase();
     let graph = std::mem::ManuallyDrop::new(DependencyGraph::from_makefile(&makefile));
 
+    // MAKED_DECISIONS: record plain builds for lean_make --check-decisions.
+    if !(dry_run || touch_only || question || use_hash) {
+        maked::decisions::init(if always_make { "B" } else { "" });
+    }
+
     // GNU make's "How Makefiles Are Remade": bring included makefiles (and
     // the makefile itself) that have rules up to date first; if any of them
     // changed or appeared, start over so the new contents are read. This runs
@@ -480,6 +489,7 @@ fn real_main() -> ExitCode {
                     #[cfg(unix)]
                     {
                         use std::os::unix::process::CommandExt;
+                        maked::decisions::flush();
                         let err = cmd.exec();
                         eprintln!(
                             "make: *** cannot restart after remaking makefiles: {err}. Stop."

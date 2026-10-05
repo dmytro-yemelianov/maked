@@ -299,6 +299,28 @@ needs a worker.
   recursive `$(MAKE)`, under random `-n -k -i -B -s -e -t -j` and goal
   lists. 600/600.
 
+### Checking real builds against the model
+
+The fuzzers check random makefiles. Real projects are checked a second way.
+With `MAKED_DECISIONS` set, maked records each decision it makes: the
+target's mtime before, phony or not, recipe or not, its prerequisites and
+their outcomes, and what maked did. `lean_make --check-decisions` runs the
+model's own `executeRule` on the same inputs for every target and compares.
+It also checks that no target was settled twice in one process and that
+every prerequisite settled before its dependent. This is still a check, not a
+proof, but it applies the model to real makefiles, not only to generated
+ones.
+
+The real-project suite records every maked phase: build, null build and
+incremental rebuild. For the six projects that is about 13,000 decisions.
+The first run disagreed on two. Lua's `all` and zlib's `static` have
+prerequisites but no recipe and no file. maked kept such a target "up to
+date", while the model, like GNU make, remakes it. Nobody could see the
+difference, because maked's dependents treated a missing prerequisite as
+rebuilt anyway. But maked's rule was not the model's, and so the check
+flagged it. maked now uses the model's rule. Every phase of all six
+projects agrees.
+
 ### Finding what nothing checks
 
 `scripts/coverage.sh` builds an instrumented maked and runs only the
