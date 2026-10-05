@@ -335,6 +335,7 @@ generator found bugs on its first run:
 | expressions | 33/200 cases agreed | trailing whitespace in `:=` values and function arguments; `$(if)`/`$(or)`/`$(and)` stripping after expansion; `$(call)` trimming its arguments; `$(subst ,X,…)`; `$(eval)` not visible until the next line; `foreach`/`call` parameters expanded twice; `$(wordlist)` spacing; `*` matching dotfiles; `ifdef` on a space; `ifeq (a, b)` whitespace |
 | directives | 97/200 | no variable flavors (`+=` on `:=`, `$(flavor)` guessed); `override` losing to the command line; `define V +=`; target-specific variables not inherited by prerequisites, and `+=` on them computed at parse time |
 | options | 102/300 | `-t` (GNU's rules for `+` lines, `-n -t`, phony targets); `(ignored)` error lines; `-k` with several goals; per-goal messages; `$(MAKEFLAGS)` in sub-makes; a hang when `-t` failed under `-j` |
+| double-colon and order-only kinds, added to the directive fuzzer | 284/300 | each `t::` rule now runs on its own, with its own `$^`/`$<`/`$?`; order-only prerequisites are made first and never make the target out of date (maked had merged the former and half-modelled the latter, as its README said) |
 
 The parser is now 87% covered by GNU-differential checks, the executor 86%,
 and maked as a whole 73% (most of the rest is maked's own options:

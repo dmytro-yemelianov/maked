@@ -1891,6 +1891,14 @@ pub fn parse_makefile_into(
                             }
                             rule.commands.push(cmd.to_string());
                         }
+                        // ... and to the current rule of a double-colon target.
+                        if let Some(dc) = makefile
+                            .double_colon
+                            .get_mut(target_name)
+                            .and_then(|v| v.last_mut())
+                        {
+                            dc.commands.push(cmd.to_string());
+                        }
                     }
                 }
                 Some(TargetType::Pattern(idx)) => {
@@ -2220,21 +2228,14 @@ pub fn parse_makefile_into(
                 prereqs_part = prereqs_part[1..].trim();
             }
 
-            // `a b: | dir` order-only prerequisites. A missing one is built
-            // first like a normal prerequisite; an existing one is ignored,
-            // so it never makes the target out of date.
-            let order_only_owned;
+            // `a b: | dir` order-only prerequisites (`Makefile::order_only`):
+            // brought up to date first, like any prerequisite, but they never
+            // make the target out of date.
             let mut order_only_names: Vec<String> = Vec::new();
             if let Some(bar) = find_top_level_char(prereqs_part, '|') {
-                let normal = &prereqs_part[..bar];
                 let order_only = expand_variables(&prereqs_part[bar + 1..], makefile, None, &[]);
                 order_only_names = order_only.split_whitespace().map(str::to_string).collect();
-                let missing: Vec<&str> = order_only
-                    .split_whitespace()
-                    .filter(|p| !Path::new(p).exists())
-                    .collect();
-                order_only_owned = format!("{} {}", normal, missing.join(" "));
-                prereqs_part = order_only_owned.trim();
+                prereqs_part = prereqs_part[..bar].trim();
             }
 
             // Static pattern rule: `targets: target-pattern: prereq-patterns`.
@@ -2383,6 +2384,18 @@ pub fn parse_makefile_into(
             let mut targets_vec = Vec::with_capacity(target_tokens.len());
             line_prereqs.clear();
             let last = target_tokens.len() - 1;
+            if is_double_colon {
+                for &tgt in &target_tokens {
+                    makefile
+                        .double_colon
+                        .entry(tgt.to_string())
+                        .or_default()
+                        .push(crate::ast::DcRule {
+                            prereqs: prereqs.clone(),
+                            commands: Vec::new(),
+                        });
+                }
+            }
             for (i, &tgt) in target_tokens.iter().enumerate() {
                 // Only a target that already has prerequisites needs this
                 // line's order restored when its recipe starts; a new rule

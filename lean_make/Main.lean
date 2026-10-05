@@ -144,6 +144,7 @@ def runPattern (tpat target : String) (prereqs : List String) : IO Unit := do
 structure Decision where
   target : String
   hasRule : Bool
+  doubleColon : Bool
   phony : Bool
   cmds : Bool
   before : Option Nat
@@ -166,7 +167,8 @@ def parseDecision (line : String) : Option Decision := do
     let deps := match rest.dropWhile (· ≠ "deps") with
       | _ :: ds => ds
       | [] => []
-    some { target, hasRule := flag "rule", phony := flag "phony", cmds := flag "cmds",
+    some { target, hasRule := flag "rule", doubleColon := flag "dcolon",
+           phony := flag "phony", cmds := flag "cmds",
            before := (field "before").bind time, out := outChar, outTime, ran := flag "ran", deps }
   | _ => none
 
@@ -192,7 +194,8 @@ def checkRun (alwaysMake : Bool) (nodes : Array Decision) : Nat × Nat × List S
       problems := s!"{d.target}: settled twice in one run" :: problems
     let depRecs := d.deps.map (seen.get? ·)
     if d.hasRule then
-      if depRecs.any (·.isNone) then
+      -- The model has no double-colon rules (each runs on its own).
+      if d.doubleColon || depRecs.any (·.isNone) then
         skipped := skipped + 1
       else
         checked := checked + 1

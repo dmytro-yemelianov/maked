@@ -516,6 +516,29 @@ fn included_makefiles_are_remade_and_reread() {
 }
 
 #[test]
+fn double_colon_rules_and_order_only_prerequisites() {
+    // Each `t::` rule runs on its own, with its own $^; an order-only
+    // prerequisite is made first but never makes the target out of date.
+    let mf = "all: dc oo\n\
+              dc:: a\n\t@echo 'one [$^] [$<]'\ndc:: b a\n\t@echo 'two [$^] [$?]'\ndc::\n\t@echo three\n\
+              oo: src | dir\n\t@echo 'oo built [$^] [$|]'\ndir:\n\t@echo 'make dir'; touch dir\n";
+    // dc is newer than a but older than b; oo is newer than src; dir missing.
+    assert_same_after(
+        &[
+            ("Makefile", mf),
+            ("a", ""),
+            ("b", ""),
+            ("dc", ""),
+            ("src", ""),
+            ("oo", ""),
+        ],
+        "touch -t 202001010000 a; touch -t 202001020000 dc; touch -t 202001030000 b; \
+         touch -t 202001010000 src; touch -t 202001020000 oo",
+        &[],
+    );
+}
+
+#[test]
 fn touch_dry_run_goals_in_turn_and_sub_make_flags() {
     // Found by benchmarks/fuzzer/options_fuzz.py.
     // (A recipe mixing `+` and plain lines is left out: GNU make 4.4 then

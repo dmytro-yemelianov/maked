@@ -45,7 +45,8 @@ impl DependencyGraph {
         // report and the TUI's node count.
         for (target, rule) in &makefile.rules {
             all_nodes.insert(target.clone());
-            let prereqs = rule.prereqs.clone();
+            let mut prereqs = rule.prereqs.clone();
+            prereqs.extend(makefile.order_only_of(target).iter().cloned());
             for dep in &prereqs {
                 all_nodes.insert(dep.clone());
             }
@@ -79,7 +80,7 @@ impl DependencyGraph {
             None => self.adj.get(u).map(Vec::as_slice).unwrap_or(&[]),
         };
 
-        for v in prereqs {
+        for v in prereqs.iter().chain(makefile.order_only_of(u)) {
             let color = colors.get(v).copied().unwrap_or(NodeColor::White);
             match color {
                 NodeColor::Gray => {
@@ -120,7 +121,7 @@ impl DependencyGraph {
                     Some(r) => &r.prereqs,
                     None => self.adj.get(&node).map(Vec::as_slice).unwrap_or(&[]),
                 };
-                for dep in prereqs {
+                for dep in prereqs.iter().chain(makefile.order_only_of(&node)) {
                     if !visited.contains(dep) {
                         stack.push(dep.clone());
                     }

@@ -73,6 +73,56 @@ impl std::fmt::Display for ExecutionError {
 
 impl std::error::Error for ExecutionError {}
 
+/// A double-colon target (`t:: prereqs`): GNU make runs each of its rules
+/// on its own, when the target is missing, the rule has no prerequisites,
+/// or one of the rule's own prerequisites is newer (or was rebuilt). Returns
+/// the rule to run, whose lines carry their rule's index (`Makefile::dc_split`),
+/// and the decision; other targets pass through unchanged.
+fn double_colon_step(
+    makefile: &Makefile,
+    config: &ExecutionConfig,
+    target: &str,
+    rule: Arc<crate::ast::Rule>,
+    decision: FreshnessDecision,
+    dep_status: impl Fn(&str) -> Option<TargetStatus>,
+) -> (Arc<crate::ast::Rule>, FreshnessDecision) {
+    let Some(rules) = makefile.double_colon.get(target) else {
+        return (rule, decision);
+    };
+    if config.use_hash {
+        return (rule, decision);
+    }
+    let tm = cached_mtime(target);
+    let newer = |p: &str| match dep_status(p) {
+        Some(TargetStatus::Rebuilt(_)) => true,
+        Some(TargetStatus::UpToDate(Some(t))) => tm.is_none_or(|m| t > m),
+        _ => cached_mtime(p).is_none(),
+    };
+    let mut cmds = Vec::new();
+    for (i, r) in rules.iter().enumerate() {
+        if config.always_make
+            || tm.is_none()
+            || r.prereqs.is_empty()
+            || r.prereqs.iter().any(|p| newer(p))
+        {
+            let mark = crate::ast::DC_MARK;
+            cmds.extend(r.commands.iter().map(|c| format!("{mark}{i}{mark}{c}")));
+        }
+    }
+    if cmds.is_empty() {
+        return (
+            rule,
+            FreshnessDecision::UpToDate(tm.unwrap_or_else(SystemTime::now)),
+        );
+    }
+    let mut picked = (*rule).clone();
+    picked.commands = cmds;
+    (
+        Arc::new(picked),
+        FreshnessDecision::NeedsRebuild(crate::freshness::RebuildReason::PrerequisiteRebuilt),
+    )
+}
+
 /// The phony root maked builds when several goals are given.
 pub const GOALS_ROOT: &str = ".MAKED_GOALS";
 
@@ -94,8 +144,10 @@ fn touch_target(
     let mut did = false;
     if rule.commands.iter().any(|c| recursive(c)) {
         for raw in &rule.commands {
+            let (raw, dc) = makefile.dc_split(raw, target);
             let (cmd_str, s1, i1, f1) = recipe_prefixes(raw);
-            let expanded = expand_variables(cmd_str, makefile, Some(target), &rule.prereqs);
+            let expanded =
+                expand_variables(cmd_str, makefile, Some(target), dc.unwrap_or(&rule.prereqs));
             let (cmd, s2, i2, f2) = recipe_prefixes(&expanded);
             if cmd.trim().is_empty() {
                 continue;
@@ -676,7 +728,8 @@ impl<'a> Executor<'a> {
             TargetStatus::Failed => ('F', None),
         };
         let rule = self.makefile.get_rule(target);
-        crate::decisions::record(target, rule.as_deref(), c, t);
+        let dc = self.makefile.double_colon.contains_key(target);
+        crate::decisions::record(target, rule.as_deref(), c, t, dc);
     }
 
     fn doname_once(
@@ -747,6 +800,28 @@ impl<'a> Executor<'a> {
             }
         }
 
+        // Order-only prerequisites: made first, but they never make the
+        // target out of date. A failure still stops the target.
+        for dep in self.makefile.order_only_of(target) {
+            let failed = match self.doname(dep, statuses, stats) {
+                Ok(TargetStatus::Failed) => true,
+                Ok(_) => false,
+                Err(e) if self.config.keep_going => {
+                    eprintln!("{e}");
+                    statuses.insert(dep.to_string(), TargetStatus::Failed);
+                    true
+                }
+                Err(e) => return Err(e),
+            };
+            if failed {
+                if !self.config.keep_going {
+                    statuses.insert(target.to_string(), TargetStatus::Failed);
+                    return Ok(TargetStatus::Failed);
+                }
+                any_dep_failed = true;
+            }
+        }
+
         if any_dep_failed {
             statuses.insert(target.to_string(), TargetStatus::Failed);
             return Ok(TargetStatus::Failed);
@@ -771,6 +846,10 @@ impl<'a> Executor<'a> {
                 cached_mtime(target),
             )
         };
+        let (rule, freshness) =
+            double_colon_step(self.makefile, &self.config, target, rule, freshness, |d| {
+                statuses.get(d).cloned()
+            });
 
         let final_status = match freshness {
             FreshnessDecision::UpToDate(mtime) => {
@@ -848,6 +927,7 @@ impl<'a> Executor<'a> {
                         if let Some((worker, auth)) = self.remote_pool.acquire_worker() {
                             let mut expanded_cmds = Vec::new();
                             for raw_cmd in &rule.commands {
+                                let (raw_cmd, dc) = self.makefile.dc_split(raw_cmd, target);
                                 let mut cmd_str = raw_cmd.trim_start();
                                 while cmd_str.starts_with('@')
                                     || cmd_str.starts_with('-')
@@ -859,7 +939,7 @@ impl<'a> Executor<'a> {
                                     cmd_str,
                                     self.makefile,
                                     Some(target),
-                                    &rule.prereqs,
+                                    dc.unwrap_or(&rule.prereqs),
                                 ));
                             }
                             let input_files: Vec<std::path::PathBuf> =
@@ -888,6 +968,7 @@ impl<'a> Executor<'a> {
                     if !ran_remotely {
                         // Execute recipe commands locally
                         for raw_cmd in &rule.commands {
+                            let (raw_cmd, dc) = self.makefile.dc_split(raw_cmd, target);
                             // Prefixes count before and after expansion
                             // (`QUIET_CC = @printf ...`), as in GNU make.
                             let (cmd_str, s1, i1, f1) = recipe_prefixes(raw_cmd);
@@ -895,7 +976,7 @@ impl<'a> Executor<'a> {
                                 cmd_str,
                                 self.makefile,
                                 Some(target),
-                                &rule.prereqs,
+                                dc.unwrap_or(&rule.prereqs),
                             );
                             let (cmd, s2, i2, f2) = recipe_prefixes(&expanded);
                             // A line that expands to nothing is skipped, not
@@ -1038,7 +1119,9 @@ impl<'a> Executor<'a> {
             };
 
             let mut unique_prereqs: crate::fxhash::FxHashSet<&String> = Default::default();
-            for dep in prereqs {
+            // Order-only prerequisites are scheduled first too; they never
+            // enter the freshness decision.
+            for dep in prereqs.iter().chain(self.makefile.order_only_of(node)) {
                 if reachable.contains(dep) {
                     unique_prereqs.insert(dep);
                 }
@@ -1210,6 +1293,14 @@ impl<'a> Executor<'a> {
                                 cached_mtime(&task),
                             )
                         };
+                        let (rule, decision) = double_colon_step(
+                            makefile,
+                            &config,
+                            &task,
+                            rule,
+                            decision,
+                            |d| target_statuses_clone.lock().unwrap().get(d).cloned(),
+                        );
 
                         let mut output_lines = Vec::new();
                         let mut build_failed = false;
@@ -1310,6 +1401,8 @@ impl<'a> Executor<'a> {
                                             {
                                                 let mut expanded_cmds = Vec::new();
                                                 for raw_cmd in &rule.commands {
+                                                    let (raw_cmd, dc) =
+                                                        makefile.dc_split(raw_cmd, &task);
                                                     let mut cmd_str = raw_cmd.trim_start();
                                                     while cmd_str.starts_with('@')
                                                         || cmd_str.starts_with('-')
@@ -1321,7 +1414,7 @@ impl<'a> Executor<'a> {
                                                         cmd_str,
                                                         makefile,
                                                         Some(&task),
-                                                        &rule.prereqs,
+                                                        dc.unwrap_or(&rule.prereqs),
                                                     ));
                                                 }
                                                 let input_files: Vec<std::path::PathBuf> = rule
@@ -1364,13 +1457,15 @@ impl<'a> Executor<'a> {
                                                     break;
                                                 }
 
+                                                let (raw_cmd, dc) =
+                                                    makefile.dc_split(raw_cmd, &task);
                                                 let (cmd_str, s1, i1, f1) =
                                                     recipe_prefixes(raw_cmd);
                                                 let expanded = expand_variables(
                                                     cmd_str,
                                                     makefile,
                                                     Some(&task),
-                                                    &rule.prereqs,
+                                                    dc.unwrap_or(&rule.prereqs),
                                                 );
                                                 let (cmd, s2, i2, f2) = recipe_prefixes(&expanded);
                                                 if cmd.trim().is_empty() {
@@ -1802,6 +1897,9 @@ impl<'a> Executor<'a> {
             return Some(done.clone());
         }
         if self.config.use_hash || self.config.always_make {
+            return None;
+        }
+        if self.makefile.double_colon.contains_key(target) {
             return None;
         }
         let rule = self.makefile.get_rule(target)?;

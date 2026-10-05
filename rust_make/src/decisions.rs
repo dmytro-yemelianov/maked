@@ -82,6 +82,7 @@ pub fn record(
     rule: Option<&crate::ast::Rule>,
     outcome: char,
     mtime: Option<SystemTime>,
+    double_colon: bool,
 ) {
     let mut guard = RECORDER.lock().unwrap();
     let Some(r) = guard.as_mut() else {
@@ -104,7 +105,8 @@ pub fn record(
     };
     let _ = writeln!(
         r.out,
-        "NODE {target} rule={has_rule} phony={phony} cmds={cmds} before={} out={outcome}:{} ran={} deps {deps}",
+        "NODE {target} rule={has_rule} phony={phony} cmds={cmds} dcolon={} before={} out={outcome}:{} ran={} deps {deps}",
+        double_colon as u8,
         ns(before),
         ns(mtime),
         ran as u8

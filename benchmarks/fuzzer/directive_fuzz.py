@@ -38,7 +38,7 @@ def val(rng):
 def snippet(rng, i, files):
     """One feature, with a goal `g{i}` whose recipe prints what it sees."""
     k = rng.choice(["define", "elseif", "tvars", "pvars", "append", "export", "vpath",
-                    "suffix", "include", "override", "chain", "defeval"])
+                    "suffix", "include", "override", "chain", "defeval", "dcolon", "orderonly"])
     g = f"g{i}"
     L = []
     if k == "define":
@@ -90,6 +90,32 @@ def snippet(rng, i, files):
     elif k == "chain":
         L += [f"X{i} = $(Y{i}) x", f"Y{i} = $(Z{i}) y", f"Z{i} := z", f"Z{i} += zz",
               f"{g}: ; @echo '{g} [$(X{i})] [$(value X{i})] [$(flavor X{i})] [$(flavor Z{i})]'"]
+    elif k == "dcolon":
+        # Double-colon rules are independent: each runs when the target is
+        # older than its own prerequisites (or has none), with its own $^.
+        t = f"dc{i}"
+        ages = rng.sample([0, 10, 20, 30], 3)
+        files.update({f"{t}a": ("", ages[0]), f"{t}b": ("", ages[1])})
+        if rng.random() < 0.7:
+            files[t] = ("", ages[2])
+        L += [f"{t}:: {t}a", f"\t@echo '{t} one [$^] [$<]'", f"{t}:: {t}b {t}a",
+              f"\t@echo '{t} two [$^] [$?]'"]
+        if rng.random() < 0.4:
+            L += [f"{t}::", f"\t@echo '{t} three'"]
+        L += [f"{g}: {t}", f"\t@echo '{g} done'"]
+    elif k == "orderonly":
+        # An order-only prerequisite is made first if missing, and never
+        # makes the target out of date.
+        t = f"oo{i}"
+        ages = rng.sample([0, 10, 20], 3)
+        files.update({f"{t}src": ("", ages[0])})
+        if rng.random() < 0.7:
+            files[t] = ("", ages[1])
+        if rng.random() < 0.5:
+            files[f"{t}dir"] = ("", ages[2])
+        L += [f"{t}: {t}src | {t}dir", f"\t@echo '{t} built [$^] [$|]'",
+              f"{t}dir:", f"\t@echo 'make {t}dir'; touch $@",
+              f"{g}: {t}", f"\t@echo '{g} done'"]
     else:  # defeval
         L += [f"define R{i}", f"{g}: ; @echo '{g} [$$(A)] [$(1)] [$$@]'", "endef",
               f"$(eval $(call R{i},{rng.choice(['arg', 'two words', ''])}))"]
@@ -129,9 +155,11 @@ def main():
                 d = Path(tmp) / name
                 d.mkdir()
                 for f, body in files.items():
+                    # A file is its text, or (text, age): older by that many seconds.
+                    body, age = body if isinstance(body, tuple) else (body, 0)
                     (d / f).parent.mkdir(parents=True, exist_ok=True)
                     (d / f).write_text(body)
-                    os.utime(d / f, (stamp, stamp))  # same in both trees
+                    os.utime(d / f, (stamp - age, stamp - age))  # same in both trees
                 (d / "Makefile").write_text(mf)
                 res[name] = run(binary, d, cli)
         if res["gmake"] == res["maked"]:

@@ -12,6 +12,17 @@ pub struct TargetVarOp {
     pub is_override: bool,
 }
 
+/// One rule of a double-colon target (`t:: prereqs`): GNU make runs each
+/// on its own, when the target is older than its own prerequisites.
+#[derive(Debug, Clone, Default)]
+pub struct DcRule {
+    pub prereqs: Vec<String>,
+    pub commands: Vec<String>,
+}
+
+/// Marks a recipe line of a double-colon rule: `\u{1}<index>\u{1}<line>`.
+pub const DC_MARK: char = '\u{1}';
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
     pub target: String,
@@ -45,6 +56,8 @@ pub struct Makefile {
     /// Variables whose value was expanded when set (`:=`, `::=`): read as
     /// is, never expanded again; `+=` expands the new text at once.
     pub simple_vars: crate::fxhash::FxHashSet<String>,
+    /// The separate rules of each double-colon target, in order.
+    pub double_colon: HashMap<String, Vec<DcRule>>,
     /// Set with `override`: later plain assignments are ignored, and the
     /// origin is "override".
     pub override_vars: crate::fxhash::FxHashSet<String>,
@@ -167,6 +180,7 @@ impl Makefile {
             variables: Default::default(),
             cli_overrides: HashSet::new(),
             simple_vars: Default::default(),
+            double_colon: HashMap::new(),
             override_vars: Default::default(),
             default_target: None,
             vpath_directives: Vec::new(),
@@ -313,6 +327,27 @@ impl Makefile {
     /// A plain assignment cannot change a command-line or `override` variable.
     pub fn is_protected(&self, key: &str) -> bool {
         self.cli_overrides.contains(key) || self.override_vars.contains(key)
+    }
+
+    /// A recipe line and, if it belongs to one rule of a double-colon
+    /// target, that rule's prerequisites (for `$^`, `$<`, `$?`).
+    pub fn dc_split<'a>(&'a self, raw: &'a str, target: &str) -> (&'a str, Option<&'a [String]>) {
+        if let Some(rest) = raw.strip_prefix(DC_MARK) {
+            if let Some((idx, line)) = rest.split_once(DC_MARK) {
+                let pre = idx
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| self.double_colon.get(target)?.get(i))
+                    .map(|r| r.prereqs.as_slice());
+                return (line, pre);
+            }
+        }
+        (raw, None)
+    }
+
+    /// The order-only prerequisites of `target` (`target: normal | these`).
+    pub fn order_only_of(&self, target: &str) -> &[String] {
+        self.order_only.get(target).map_or(&[], Vec::as_slice)
     }
 
     /// True for `:=` variables, whose values are not expanded again.
