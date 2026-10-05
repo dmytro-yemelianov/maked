@@ -24,7 +24,9 @@ fn print_help() {
            --cache-dir=D Set cache directory (default .makeyd_cache)\n  \
            --emit-ninja[=F] Transpile Makefile to Ninja build file (default build.ninja)\n  \
            --emit-compdb[=F] Generate Clang JSON Compilation Database (default compile_commands.json)\n  \
-           --worker-listen=A Start remote build worker daemon listening on TCP address A\n  \
+           --worker-listen=A Start remote build worker daemon on TCP address A (loopback only;\n  \
+                         needs MAKEYD_WORKER_TOKEN_FILE or MAKEYD_WORKER_TOKEN)\n  \
+           --worker-allow-remote Let --worker-listen accept non-loopback addresses\n  \
            --remote-workers=W Dispatch compilation tasks across remote worker addresses W\n  \
            --tui         Enable live terminal execution dashboard\n  \
            -h, --help    Print this message and exit"
@@ -72,6 +74,7 @@ fn real_main() -> ExitCode {
     let mut emit_ninja: Option<String> = None;
     let mut emit_compdb: Option<String> = None;
     let mut worker_listen: Option<String> = None;
+    let mut worker_allow_remote = false;
     let mut remote_workers: Vec<String> = Vec::new();
     let mut tui = false;
 
@@ -168,6 +171,8 @@ fn real_main() -> ExitCode {
             emit_compdb = Some(path.to_string());
         } else if let Some(addr) = arg.strip_prefix("--worker-listen=") {
             worker_listen = Some(addr.to_string());
+        } else if arg == "--worker-allow-remote" {
+            worker_allow_remote = true;
         } else if let Some(workers) = arg.strip_prefix("--remote-workers=") {
             for w in workers.split(',') {
                 let trimmed = w.trim();
@@ -198,11 +203,25 @@ fn real_main() -> ExitCode {
     }
 
     if let Some(ref addr) = worker_listen {
-        if let Err(e) = makeyd::distributed::run_worker_daemon(addr) {
+        let auth = match makeyd::distributed::WorkerAuth::from_env() {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("make: *** {e}. Stop.");
+                return ExitCode::from(2);
+            }
+        };
+        if let Err(e) = makeyd::distributed::run_worker_daemon(addr, auth, worker_allow_remote) {
             eprintln!("make: *** worker daemon error on {addr}: {e}. Stop.");
             return ExitCode::from(1);
         }
         return ExitCode::SUCCESS;
+    }
+
+    if !remote_workers.is_empty() {
+        if let Err(e) = makeyd::distributed::WorkerAuth::from_env() {
+            eprintln!("make: *** --remote-workers: {e}. Stop.");
+            return ExitCode::from(2);
+        }
     }
 
     if let Some(ref dir) = chdir {

@@ -243,8 +243,14 @@ impl<'a> Executor<'a> {
                 .unwrap_or_else(|| std::path::PathBuf::from(".makeyd_cache")),
         };
         let cache = Arc::new(crate::cache::ContentAddressableCache::new(cache_config));
+        let remote_auth = if config.remote_workers.is_empty() {
+            None
+        } else {
+            crate::distributed::WorkerAuth::from_env().ok()
+        };
         let remote_pool = Arc::new(crate::distributed::RemoteWorkerPool::new(
             config.remote_workers.clone(),
+            remote_auth,
         ));
         let total_targets = graph.all_nodes.len();
         let tui = crate::tui::TuiReporter::new(config.jobs, total_targets, config.tui);
@@ -421,7 +427,7 @@ impl<'a> Executor<'a> {
                 if !restored_from_cache {
                     let mut ran_remotely = false;
                     if !self.remote_pool.is_empty() && !self.config.dry_run {
-                        if let Some(worker) = self.remote_pool.acquire_worker() {
+                        if let Some((worker, auth)) = self.remote_pool.acquire_worker() {
                             let mut expanded_cmds = Vec::new();
                             for raw_cmd in &rule.commands {
                                 let mut cmd_str = raw_cmd.trim_start();
@@ -442,6 +448,7 @@ impl<'a> Executor<'a> {
                                 rule.prereqs.iter().map(std::path::PathBuf::from).collect();
                             if let Ok(res) = crate::distributed::dispatch_remote_build(
                                 &worker,
+                                &auth,
                                 target,
                                 &expanded_cmds,
                                 &input_files,
@@ -801,7 +808,9 @@ impl<'a> Executor<'a> {
                                 if !restored_from_cache && !config.question {
                                     let mut ran_remotely = false;
                                     if !remote_pool_clone.is_empty() && !config.dry_run {
-                                        if let Some(worker) = remote_pool_clone.acquire_worker() {
+                                        if let Some((worker, auth)) =
+                                            remote_pool_clone.acquire_worker()
+                                        {
                                             let mut expanded_cmds = Vec::new();
                                             for raw_cmd in &rule.commands {
                                                 let mut cmd_str = raw_cmd.trim_start();
@@ -826,6 +835,7 @@ impl<'a> Executor<'a> {
                                             if let Ok(res) =
                                                 crate::distributed::dispatch_remote_build(
                                                     &worker,
+                                                    &auth,
                                                     &task,
                                                     &expanded_cmds,
                                                     &input_files,

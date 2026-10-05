@@ -1,6 +1,6 @@
 # Inside makeyd: a make in Rust, a model in Lean, and the benchmark that lied
 
-*Dmytro Yemelianov · October 2026 · [makeyd v0.1.2](https://github.com/dmytro-yemelianov/makeyd/releases/tag/v0.1.2)*
+*Dmytro Yemelianov · October 2026 · [makeyd v0.1.3](https://github.com/dmytro-yemelianov/makeyd/releases/tag/v0.1.3)*
 
 makeyd ("make by Yemelianov Dmytro") is a POSIX make (IEEE Std 1003.1) with
 the GNU extensions people actually use. It is written in Rust with zero
@@ -42,7 +42,7 @@ flowchart LR
 | `compdb.rs` | 239 | `--emit-compdb`: a Clang `compile_commands.json` derived from the rules |
 | `trace.rs` | 247 | `--trace`: a Chrome/Perfetto JSON timeline, plus `--profile` |
 | `tui.rs` | 185 | `--tui`: a raw-ANSI live dashboard that falls back to plain output when not on a TTY |
-| `distributed.rs` | 304 | `--worker-listen` / `--remote-workers`: a TCP worker pool with local fallback |
+| `distributed.rs` | 567 | `--worker-listen` / `--remote-workers`: an authenticated TCP worker pool with local fallback |
 
 Zero dependencies was a deliberate constraint. SHA-256, the JSON writers and
 the terminal renderer are all in-tree. The binary is fully self-contained,
@@ -405,9 +405,10 @@ microcontrollers would be a different product.
 - On graphs with almost no parallelism (diamond, deep chains), null builds
   are still 1.7–2.1× slower than GNU make. Cold synthetic builds are
   1.3–1.75× slower.
-- `--worker-listen` runs any command a TCP peer sends, **with no
-  authentication or encryption**. Use it only on loopback or a network you
-  fully trust.
+- Remote workers authenticate every request with a shared token (since
+  v0.1.3: HMAC-SHA256 over a per-connection nonce, loopback by default,
+  sandboxed relative paths), but traffic is **not encrypted**. Between
+  hosts, use an SSH tunnel or a VPN.
 - The jobserver and remote workers are Unix-only. On Windows, recipes run
   via `$SHELL` or `cmd.exe`.
 - Clippy reports about 50 lints. CI shows them but does not yet fail on

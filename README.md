@@ -69,9 +69,32 @@ elan (Lean `v4.30.0` per `lean_make/lean-toolchain`), Python 3 and GNU make.
 
 ## Remote workers: security
 
-`makeyd --worker-listen=ADDR` runs any command that a TCP client sends it,
-with no authentication or encryption. Bind it only to loopback or a network
-you fully trust.
+A worker runs the recipe commands a coordinator sends it, so since v0.1.3
+it only accepts coordinators that hold a shared token:
+
+```sh
+# on both machines (file mode 0600; the token is never passed on argv)
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > ~/.makeyd-worker-token
+export MAKEYD_WORKER_TOKEN_FILE=~/.makeyd-worker-token
+
+makeyd --worker-listen=127.0.0.1:7070                    # worker, loopback only
+makeyd --worker-listen=0.0.0.0:7070 --worker-allow-remote # worker for other hosts
+makeyd -j8 --remote-workers=build1:7070,build2:7070       # coordinator
+```
+
+- Each request and response is signed with HMAC-SHA256 over a fresh nonce
+  from the worker. A wrong or missing token gets nothing executed, and a
+  captured request cannot be replayed.
+- The worker listens on loopback unless `--worker-allow-remote` is given.
+- Input and target paths must be relative and free of `..`. Each request
+  gets its own sandbox, and the coordinator accepts only the target file
+  back.
+- Messages are capped at 256 MiB, and a client has 60 s to send its
+  request.
+
+Traffic is authenticated but **not encrypted**: sources and outputs cross
+the network in clear text. Between hosts, use an SSH tunnel or a VPN. If a
+worker is unreachable or fails, the target is built locally.
 
 ## CI and releases
 
