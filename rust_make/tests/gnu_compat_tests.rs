@@ -552,3 +552,28 @@ fn keep_going_builds_what_does_not_depend_on_a_failure() {
     assert_same(&files, &["-k", "-j4"]);
     assert_same(&files, &[]);
 }
+
+#[test]
+fn expansion_keeps_non_ascii_text_intact() {
+    assert_same(
+        &[(
+            "Makefile",
+            "ІМЯ = світ\nX = ü$(ІМЯ)ß\nall:\n\t@echo 'Привіт, $(X)! $$HOME-літерал ${ІМЯ}'\n",
+        )],
+        &[],
+    );
+}
+
+#[test]
+fn colon_noop_and_colon_redirect() {
+    assert_same(
+        &[
+            ("f", "content\n"),
+            (
+                "Makefile",
+                "all:\n\t: just a comment\n\t: > f\n\t@wc -c < f | tr -d ' '\n",
+            ),
+        ],
+        &[],
+    );
+}

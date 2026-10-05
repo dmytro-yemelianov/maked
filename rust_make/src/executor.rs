@@ -263,61 +263,86 @@ fn mentions_make(raw: &str) -> bool {
 /// Build the process for one recipe line: direct exec when the line has no
 /// shell syntax and the shell is the default, else `SHELL -c line`. Applies
 /// exported and unexported variables and MAKEFLAGS.
-fn recipe_command(cmd: &str, makeflags: Option<&str>, env: &crate::ast::RecipeEnv) -> Command {
-    let needs_shell = env.shell != "/bin/sh"
-        || cmd.chars().any(|c| {
-            matches!(
-                c,
-                '*' | '?'
-                    | '['
-                    | ']'
-                    | '~'
-                    | '='
-                    | '|'
-                    | '&'
-                    | ';'
-                    | '<'
-                    | '>'
-                    | '('
-                    | ')'
-                    | '$'
-                    | '`'
-                    | '\\'
-                    | '"'
-                    | '\''
-                    | '\n'
-                    | '#'
-            )
-        });
-    // Shell builtins and keywords have no binary to exec (GNU make's list).
-    const SH_BUILTINS: &[&str] = &[
-        ".", ":", "alias", "bg", "break", "case", "cd", "command", "continue", "do", "done",
-        "elif", "else", "esac", "eval", "exec", "exit", "export", "fc", "fg", "fi", "for",
-        "getopts", "hash", "if", "jobs", "login", "logout", "read", "readonly", "return", "set",
-        "shift", "source", "test", "then", "times", "trap", "type", "ulimit", "umask", "unalias",
-        "unset", "until", "wait", "while", "{", "}", "!", "local", "[",
-    ];
-    let needs_shell = needs_shell
-        || cmd
-            .split_whitespace()
-            .next()
-            .is_some_and(|w| SH_BUILTINS.contains(&w));
-    // On Windows, `echo`, `copy`, `del`, `mkdir` ... are cmd.exe builtins,
-    // not programs: always go through the shell (GNU make does the same
-    // without sh.exe).
-    let needs_shell = needs_shell || cfg!(windows);
-    let mut command = if needs_shell {
-        create_shell_command_with(&resolve_program(&env.shell, env), cmd)
-    } else {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        match parts.split_first() {
-            Some((program, args)) => {
-                let mut c = Command::new(resolve_program(program, env));
-                c.args(args);
-                c
+/// Shell builtins and keywords have no binary to exec (GNU make's list).
+const SH_BUILTINS: &[&str] = &[
+    ".", ":", "alias", "bg", "break", "case", "cd", "command", "continue", "do", "done", "elif",
+    "else", "esac", "eval", "exec", "exit", "export", "fc", "fg", "fi", "for", "getopts", "hash",
+    "if", "jobs", "login", "logout", "read", "readonly", "return", "set", "shift", "source",
+    "test", "then", "times", "trap", "type", "ulimit", "umask", "unalias", "unset", "until",
+    "wait", "while", "{", "}", "!", "local", "[",
+];
+
+/// Split `cmd` into argv when no shell is needed, as GNU make's
+/// construct_command_argv does: words separated by blanks, `'...'` taken
+/// literally, `"..."` literally unless it holds `$`, a backtick or `\`.
+/// Anything else a shell would interpret (outside quotes), an unbalanced
+/// quote, a shell builtin as the first word, or Windows (where `echo` and
+/// `copy` are cmd.exe builtins) returns `None`: run it through the shell.
+pub(crate) fn split_simple_command(cmd: &str) -> Option<Vec<String>> {
+    if cfg!(windows) {
+        return None;
+    }
+    let mut argv: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_word = false;
+    let mut chars = cmd.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' | '\t' => {
+                if in_word {
+                    argv.push(std::mem::take(&mut cur));
+                    in_word = false;
+                }
             }
-            None => create_shell_command_with(&env.shell, ""),
+            '\'' => {
+                in_word = true;
+                loop {
+                    match chars.next()? {
+                        '\'' => break,
+                        q => cur.push(q),
+                    }
+                }
+            }
+            '"' => {
+                in_word = true;
+                loop {
+                    match chars.next()? {
+                        '"' => break,
+                        '$' | '`' | '\\' => return None,
+                        q => cur.push(q),
+                    }
+                }
+            }
+            '*' | '?' | '[' | ']' | '~' | '=' | '|' | '&' | ';' | '<' | '>' | '(' | ')' | '$'
+            | '`' | '\\' | '\n' | '#' | '{' | '}' | '!' | '%' | '^' => return None,
+            _ => {
+                in_word = true;
+                cur.push(c);
+            }
         }
+    }
+    if in_word {
+        argv.push(cur);
+    }
+    if argv.is_empty() || SH_BUILTINS.contains(&argv[0].as_str()) {
+        return None;
+    }
+    Some(argv)
+}
+
+fn recipe_command(cmd: &str, makeflags: Option<&str>, env: &crate::ast::RecipeEnv) -> Command {
+    let direct = if env.shell == "/bin/sh" {
+        split_simple_command(cmd)
+    } else {
+        None
+    };
+    let mut command = match direct {
+        Some(argv) => {
+            let mut c = Command::new(resolve_program(&argv[0], env));
+            c.args(&argv[1..]);
+            c
+        }
+        None => create_shell_command_with(&resolve_program(&env.shell, env), cmd),
     };
     for name in &env.unset {
         command.env_remove(name);
@@ -339,11 +364,30 @@ fn recipe_command(cmd: &str, makeflags: Option<&str>, env: &crate::ast::RecipeEn
     command
 }
 
+/// `:` with plain arguments (git: `: no custom templates yet`) does
+/// nothing and succeeds; GNU make does not start a shell for it either.
+/// `: > file` and the like still go to the shell.
+fn is_noop_line(cmd: &str) -> bool {
+    let t = cmd.trim();
+    (t == ":" || t.starts_with(": ") || t.starts_with(":\t"))
+        && split_simple_command(&format!("true{}", &t[1..])).is_some()
+}
+
+#[cfg(unix)]
+fn success_status() -> std::process::ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    std::process::ExitStatus::from_raw(0)
+}
+
 fn run_command_status_fast(
     cmd: &str,
     makeflags: Option<&str>,
     env: &crate::ast::RecipeEnv,
 ) -> std::io::Result<std::process::ExitStatus> {
+    #[cfg(unix)]
+    if is_noop_line(cmd) {
+        return Ok(success_status());
+    }
     recipe_command(cmd, makeflags, env).status()
 }
 
@@ -352,6 +396,14 @@ fn run_command_output_fast(
     makeflags: Option<&str>,
     env: &crate::ast::RecipeEnv,
 ) -> std::io::Result<std::process::Output> {
+    #[cfg(unix)]
+    if is_noop_line(cmd) {
+        return Ok(std::process::Output {
+            status: success_status(),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        });
+    }
     recipe_command(cmd, makeflags, env).output()
 }
 
@@ -1482,5 +1534,36 @@ impl<'a> Executor<'a> {
         } else {
             self.execute_sequential(root)
         }
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::split_simple_command as split;
+
+    #[test]
+    fn test_split_simple_command() {
+        let v = |xs: &[&str]| Some(xs.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(split("touch a b"), v(&["touch", "a", "b"]));
+        assert_eq!(
+            split("sh -c 'uname -s 2>/dev/null || echo not'"),
+            v(&["sh", "-c", "uname -s 2>/dev/null || echo not"])
+        );
+        assert_eq!(split("echo \"a b\" c''d ''"), v(&["echo", "a b", "cd", ""]));
+        assert_eq!(split("echo \"$HOME\""), None);
+        assert_eq!(split("echo a > f"), None);
+        assert_eq!(split("echo 'unterminated"), None);
+        assert_eq!(split("cd dir"), None);
+        assert_eq!(split("VAR=1 cmd"), None);
+        assert_eq!(split(""), None);
+    }
+
+    #[test]
+    fn test_noop_lines() {
+        assert!(super::is_noop_line(":"));
+        assert!(super::is_noop_line(": no custom templates yet"));
+        assert!(!super::is_noop_line(": > truncated"));
+        assert!(!super::is_noop_line(":foo"));
+        assert!(!super::is_noop_line("true"));
     }
 }

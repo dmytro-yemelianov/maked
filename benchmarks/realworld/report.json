@@ -8,13 +8,13 @@
         "gmake": {
           "tool": "gmake",
           "build_ok": true,
-          "build_seconds": 0.54,
+          "build_seconds": 0.49,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 0.0,
+          "null_seconds": 0.01,
           "null_changed": [],
           "incr_ok": true,
-          "incr_seconds": 0.49,
+          "incr_seconds": 0.45,
           "incr_changed": [
             "adler32.lo",
             "adler32.o",
@@ -48,13 +48,13 @@
         "maked": {
           "tool": "maked",
           "build_ok": true,
-          "build_seconds": 0.72,
+          "build_seconds": 0.49,
           "smoke_ok": true,
           "null_ok": true,
           "null_seconds": 0.01,
           "null_changed": [],
           "incr_ok": true,
-          "incr_seconds": 0.46,
+          "incr_seconds": 0.41,
           "incr_changed": [
             "adler32.lo",
             "adler32.o",
@@ -95,13 +95,13 @@
         "gmake": {
           "tool": "gmake",
           "build_ok": true,
-          "build_seconds": 27.57,
+          "build_seconds": 21.89,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 0.04,
+          "null_seconds": 0.02,
           "null_changed": [],
           "incr_ok": true,
-          "incr_seconds": 6.35,
+          "incr_seconds": 1.84,
           "incr_changed": [
             ".deps/sqlite3-shell.Po",
             "sqlite3",
@@ -112,13 +112,13 @@
         "maked": {
           "tool": "maked",
           "build_ok": true,
-          "build_seconds": 25.04,
+          "build_seconds": 22.11,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 0.01,
+          "null_seconds": 0.02,
           "null_changed": [],
           "incr_ok": true,
-          "incr_seconds": 1.98,
+          "incr_seconds": 1.9,
           "incr_changed": [
             ".deps/sqlite3-shell.Po",
             "sqlite3",
@@ -136,15 +136,15 @@
         "gmake": {
           "tool": "gmake",
           "build_ok": true,
-          "build_seconds": 14.51,
+          "build_seconds": 10.38,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 1.84,
+          "null_seconds": 1.82,
           "null_changed": [
             "src/Makefile.dep"
           ],
           "incr_ok": true,
-          "incr_seconds": 7.6,
+          "incr_seconds": 7.33,
           "incr_changed": [
             "src/acl.d",
             "src/acl.o",
@@ -276,15 +276,15 @@
         "maked": {
           "tool": "maked",
           "build_ok": true,
-          "build_seconds": 11.15,
+          "build_seconds": 10.23,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 1.84,
+          "null_seconds": 1.78,
           "null_changed": [
             "src/Makefile.dep"
           ],
           "incr_ok": true,
-          "incr_seconds": 7.75,
+          "incr_seconds": 7.4,
           "incr_changed": [
             "src/acl.d",
             "src/acl.o",
@@ -423,13 +423,13 @@
         "gmake": {
           "tool": "gmake",
           "build_ok": true,
-          "build_seconds": 16.32,
+          "build_seconds": 9.4,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 0.84,
+          "null_seconds": 0.38,
           "null_changed": [],
           "incr_ok": true,
-          "incr_seconds": 15.67,
+          "incr_seconds": 9.32,
           "incr_changed": [
             ".depend/abspath.o.d",
             ".depend/add-interactive.o.d",
@@ -1649,13 +1649,13 @@
         "maked": {
           "tool": "maked",
           "build_ok": true,
-          "build_seconds": 13.02,
+          "build_seconds": 9.82,
           "smoke_ok": true,
           "null_ok": true,
           "null_seconds": 0.42,
           "null_changed": [],
           "incr_ok": true,
-          "incr_seconds": 9.48,
+          "incr_seconds": 9.27,
           "incr_changed": [
             ".depend/abspath.o.d",
             ".depend/add-interactive.o.d",
@@ -2882,10 +2882,10 @@
         "gmake": {
           "tool": "gmake",
           "build_ok": true,
-          "build_seconds": 4.4,
+          "build_seconds": 4.67,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 0.41,
+          "null_seconds": 0.33,
           "null_changed": [
             "jq",
             "src/.deps/main.Po",
@@ -2893,7 +2893,7 @@
             "src/version.h"
           ],
           "incr_ok": true,
-          "incr_seconds": 1.99,
+          "incr_seconds": 2.09,
           "incr_changed": [
             ".libs/libjq-symbols.expsym",
             ".libs/libjq.1.dylib",
@@ -2985,10 +2985,10 @@
         "maked": {
           "tool": "maked",
           "build_ok": true,
-          "build_seconds": 4.54,
+          "build_seconds": 4.7,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 0.31,
+          "null_seconds": 0.34,
           "null_changed": [
             "jq",
             "src/.deps/main.Po",
@@ -2996,7 +2996,7 @@
             "src/version.h"
           ],
           "incr_ok": true,
-          "incr_seconds": 1.99,
+          "incr_seconds": 2.11,
           "incr_changed": [
             ".libs/libjq-symbols.expsym",
             ".libs/libjq.1.dylib",
@@ -3100,13 +3100,13 @@
         "gmake": {
           "tool": "gmake",
           "build_ok": true,
-          "build_seconds": 0.51,
+          "build_seconds": 0.52,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 0.01,
+          "null_seconds": 0.04,
           "null_changed": [],
           "incr_ok": true,
-          "incr_seconds": 0.5,
+          "incr_seconds": 0.55,
           "incr_changed": [
             "src/lapi.o",
             "src/lauxlib.o",
@@ -3154,10 +3154,10 @@
           "build_seconds": 0.59,
           "smoke_ok": true,
           "null_ok": true,
-          "null_seconds": 0.02,
+          "null_seconds": 0.03,
           "null_changed": [],
           "incr_ok": true,
-          "incr_seconds": 0.48,
+          "incr_seconds": 0.54,
           "incr_changed": [
             "src/lapi.o",
             "src/lauxlib.o",

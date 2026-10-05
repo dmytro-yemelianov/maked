@@ -63,100 +63,114 @@ fn expand_variables_internal(
     }
     *depth += 1;
 
+    // Scan bytes: every byte that matters ('$', delimiters, the automatic
+    // variable names) is ASCII, so slicing at those positions is valid
+    // UTF-8, and the text between references is copied in one piece.
     let mut result = String::with_capacity(text.len());
-    let chars: Vec<char> = text.chars().collect();
+    let bytes = text.as_bytes();
+    let n = bytes.len();
     let mut i = 0;
+    let mut seg = 0;
 
-    while i < chars.len() {
-        if chars[i] == '$' && i + 1 < chars.len() {
-            let next_ch = chars[i + 1];
-            if next_ch == '$' {
-                result.push('$');
-                i += 2;
-                continue;
-            }
-
-            // Bare automatic variables: $@ $< $^ $+ $? $* $|
-            if matches!(next_ch, '@' | '<' | '^' | '+' | '?' | '*' | '|') {
-                let mut buf = [0u8; 4];
-                if let Some(v) =
-                    automatic_var(next_ch.encode_utf8(&mut buf), makefile, target, prereqs)
-                {
-                    result.push_str(&v);
-                }
-                i += 2;
-                continue;
-            }
-
-            // Parenthesized or braced variables: $(...) or ${...}
-            let (open_ch, close_ch) = match next_ch {
-                '(' => ('(', ')'),
-                '{' => ('{', '}'),
-                _ => ('\0', '\0'),
-            };
-
-            if open_ch != '\0' {
-                let mut paren_depth = 1;
-                let start = i + 2;
-                let mut end = start;
-                while end < chars.len() {
-                    if chars[end] == open_ch {
-                        paren_depth += 1;
-                    } else if chars[end] == close_ch {
-                        paren_depth -= 1;
-                        if paren_depth == 0 {
-                            break;
-                        }
-                    }
-                    end += 1;
-                }
-
-                if end < chars.len() {
-                    let inner: String = chars[start..end].iter().collect();
-                    let expanded =
-                        eval_inner(&inner, makefile, target, prereqs, scoped_vars, depth);
-                    result.push_str(&expanded);
-                    i = end + 1;
-                    continue;
-                }
-            } else if next_ch.is_alphanumeric() || next_ch == '_' {
-                let single_name = next_ch.to_string();
-                let val_opt = if let Some(sv) = scoped_vars {
-                    sv.get(&single_name).cloned()
-                } else {
-                    None
-                };
-                let val_opt = val_opt
-                    .or_else(|| {
-                        if let Some(t) = target {
-                            makefile.get_target_var(t, &single_name)
-                        } else {
-                            None
-                        }
-                    })
-                    .or_else(|| makefile.get_var(&single_name));
-
-                if let Some(val) = val_opt {
-                    if val.contains('$') {
-                        result.push_str(&expand_variables_internal(
-                            &val,
-                            makefile,
-                            target,
-                            prereqs,
-                            scoped_vars,
-                            depth,
-                        ));
-                    } else {
-                        result.push_str(&val);
-                    }
-                }
-                i += 2;
-                continue;
-            }
+    while i < n {
+        if bytes[i] != b'$' || i + 1 >= n {
+            i += 1;
+            continue;
         }
-        result.push(chars[i]);
+        let next = bytes[i + 1];
+        if next == b'$' {
+            result.push_str(&text[seg..i]);
+            result.push('$');
+            i += 2;
+            seg = i;
+            continue;
+        }
+
+        // Bare automatic variables: $@ $< $^ $+ $? $* $|
+        if matches!(next, b'@' | b'<' | b'^' | b'+' | b'?' | b'*' | b'|') {
+            result.push_str(&text[seg..i]);
+            if let Some(v) = automatic_var(&text[i + 1..i + 2], makefile, target, prereqs) {
+                result.push_str(&v);
+            }
+            i += 2;
+            seg = i;
+            continue;
+        }
+
+        // Parenthesized or braced references: $(...) or ${...}
+        if next == b'(' || next == b'{' {
+            let (open, close) = if next == b'(' {
+                (b'(', b')')
+            } else {
+                (b'{', b'}')
+            };
+            let start = i + 2;
+            let mut level = 1;
+            let mut end = start;
+            while end < n {
+                if bytes[end] == open {
+                    level += 1;
+                } else if bytes[end] == close {
+                    level -= 1;
+                    if level == 0 {
+                        break;
+                    }
+                }
+                end += 1;
+            }
+            if end < n {
+                result.push_str(&text[seg..i]);
+                let expanded = eval_inner(
+                    &text[start..end],
+                    makefile,
+                    target,
+                    prereqs,
+                    scoped_vars,
+                    depth,
+                );
+                result.push_str(&expanded);
+                i = end + 1;
+                seg = i;
+                continue;
+            }
+            // Unterminated: copied as text.
+            i += 1;
+            continue;
+        }
+
+        // Single-character variable: $X
+        let Some(c) = text[i + 1..].chars().next() else {
+            i += 1;
+            continue;
+        };
+        if c.is_alphanumeric() || c == '_' {
+            result.push_str(&text[seg..i]);
+            let name = &text[i + 1..i + 1 + c.len_utf8()];
+            let val_opt = scoped_vars
+                .and_then(|sv| sv.get(name).cloned())
+                .or_else(|| target.and_then(|t| makefile.get_target_var(t, name)))
+                .or_else(|| makefile.get_var(name));
+            if let Some(val) = val_opt {
+                if val.contains('$') {
+                    result.push_str(&expand_variables_internal(
+                        &val,
+                        makefile,
+                        target,
+                        prereqs,
+                        scoped_vars,
+                        depth,
+                    ));
+                } else {
+                    result.push_str(&val);
+                }
+            }
+            i += 1 + c.len_utf8();
+            seg = i;
+            continue;
+        }
         i += 1;
     }
+    result.push_str(&text[seg..]);
 
     *depth -= 1;
     result
@@ -1420,7 +1434,21 @@ fn strip_str(text: &str) -> String {
 }
 
 fn shell_cmd(cmd: &str) -> String {
-    let output = crate::executor::create_shell_command(cmd).output();
+    // Direct exec when no shell is needed (GNU make does the same), so
+    // `$(shell sh -c '...')` starts one shell, not two. stderr and stdin
+    // stay connected to make's, as in GNU make.
+    let mut command = match crate::executor::split_simple_command(cmd) {
+        Some(argv) => {
+            let mut c = std::process::Command::new(&argv[0]);
+            c.args(&argv[1..]);
+            c
+        }
+        None => crate::executor::create_shell_command(cmd),
+    };
+    let output = command
+        .stdin(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .output();
 
     match output {
         Ok(out) => {

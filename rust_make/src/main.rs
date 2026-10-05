@@ -353,6 +353,9 @@ fn real_main() -> ExitCode {
     };
 
     // Construct Dependency Graph
+    // Parsing is done: rules are fixed from here on, so rule lookups can be
+    // cached and `$(eval)` assignments go to the runtime overlay.
+    maked::ast::enter_execution_phase();
     let graph = DependencyGraph::from_makefile(&makefile);
 
     // GNU make's "How Makefiles Are Remade": bring included makefiles (and
