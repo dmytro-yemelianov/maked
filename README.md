@@ -14,6 +14,9 @@ Rust, plus an executable Lean 4 model of make's freshness semantics.
 - `benchmarks/fuzzer/`: a differential fuzzer that runs makeyd, GNU make and
   the Lean model on random DAGs. Agreement there is test evidence, not proof.
 
+For the architecture, what the Lean model does and does not prove, and benchmarks
+against GNU make and Ninja, see **[Inside makeyd](docs/inside-makeyd.md)**.
+
 ## Install
 
 Download an archive for your platform from

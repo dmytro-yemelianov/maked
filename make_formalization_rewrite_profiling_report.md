@@ -188,6 +188,8 @@ The rewritten `makeyd` was validated on **Lua 5.4.9**, compiling `liblua.a`, `lu
   - Mach-O 64-bit executable arm64 byte parity.
 
 ### 3.2 Up-to-Date / Idempotency Benchmark (Hyperfine, 30 runs)
+> **Correction (2026-10-05):** the numbers in this section came from a flawed harness. Ninja was timed without its own `.ninja_log`, and make was given no goal, so in the modular graphs it built only the first rule. For re-measured results and the fixed harness (`benchmarks/scalability/fair_bench.sh`), see [docs/inside-makeyd.md §4](docs/inside-makeyd.md#4-benchmarks). Against Ninja, makeyd is slower on every null build, not 15× faster.
+
 Comparing up-to-date traversal across three implementations on Lua 5.4.9:
 
 ```
@@ -385,6 +387,8 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
   - `make release-all`: Assembles and packages `.tar.gz` and `.zip` archives with automated SHA-256 checksum generation (`SHA256SUMS.txt`).
 
 ### Track 13: Mega-Project Scalability & Stress Benchmark Suite (1,000 to 10,000 Targets)
+> **Correction (2026-10-05):** the numbers in this section came from a flawed harness. Ninja was timed without its own `.ninja_log`, and make was given no goal, so in the modular graphs it built only the first rule. For re-measured results and the fixed harness (`benchmarks/scalability/fair_bench.sh`), see [docs/inside-makeyd.md §4](docs/inside-makeyd.md#4-benchmarks). Against Ninja, makeyd is slower on every null build, not 15× faster.
+
 - **Massive DAG Generator**: [benchmarks/scalability/generate_massive_dag.py](benchmarks/scalability/generate_massive_dag.py) synthesizing arbitrary scale DAGs (modular packages, deep sequential pipelines, diamond lattices, and fan-out clusters) up to 50,000 nodes.
 - **Benchmark Runner**: [benchmarks/scalability/run_scale_benchmark.py](benchmarks/scalability/run_scale_benchmark.py) evaluating cold builds, null-build traversal latency, dry-run parsing throughput, multi-threaded scaling (`-j1` to `-j16`), and peak RSS memory.
 - **Empirical Scalability Results ([benchmarks/scalability/scalability_report.json](benchmarks/scalability/scalability_report.json))**:
