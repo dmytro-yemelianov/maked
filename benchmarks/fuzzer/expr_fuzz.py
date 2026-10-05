@@ -24,6 +24,13 @@ ROOT = Path(__file__).resolve().parents[2]
 MAKED = Path(os.environ.get("MAKED_BIN", ROOT / "rust_make/target/release/maked"))
 GMAKE = shutil.which("gmake") or shutil.which("make")
 
+
+def clean_env(env):
+    """A minimal environment, keeping the coverage profile path if set."""
+    if "LLVM_PROFILE_FILE" in os.environ:
+        env["LLVM_PROFILE_FILE"] = os.environ["LLVM_PROFILE_FILE"]
+    return env
+
 ATOMS = ["a", "b", "a.c", "b.o", "src/x.c", "src/y.h", "lib/z.a", "./m.c", "d/e/f.cc",
          "x%y", "%", ".hidden", "a.b.c", "/abs/p.c", "foo", "foo.c", "bar.c", "-flag",
          "k=v", "..", "dir/", "UP", "a.c.o", "tests/t1.sh"]
@@ -129,7 +136,7 @@ def case(seed, n_expr=25):
 
 def run(binary, d):
     r = subprocess.run([binary, "-s", "--no-print-directory", "all"], cwd=d, capture_output=True,
-                       text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent"})
+                       text=True, timeout=30, env=clean_env({"PATH": "/usr/bin:/bin", "HOME": "/nonexistent"}))
     return r.returncode, r.stdout.splitlines()
 
 

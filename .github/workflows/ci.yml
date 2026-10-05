@@ -65,6 +65,9 @@ jobs:
       - name: Expression fuzzer (functions, substitution refs, conditionals vs GNU make)
         run: python3 benchmarks/fuzzer/expr_fuzz.py 500
 
+      - name: Directive fuzzer (define, else-if, target/pattern variables, override, vpath, include)
+        run: python3 benchmarks/fuzzer/directive_fuzz.py 300
+
       - name: Pattern-rule fuzzer (maked vs GNU make vs Lean Pattern spec, subdirectories)
         run: python3 benchmarks/fuzzer/pattern_fuzz.py 300
 

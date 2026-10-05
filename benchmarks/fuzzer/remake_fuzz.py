@@ -28,6 +28,13 @@ MAKED = Path(os.environ.get("MAKED_BIN", ROOT / "rust_make/target/release/maked"
 GMAKE = shutil.which("gmake") or shutil.which("make")
 
 
+def clean_env(env):
+    """A minimal environment, keeping the coverage profile path if set."""
+    if "LLVM_PROFILE_FILE" in os.environ:
+        env["LLVM_PROFILE_FILE"] = os.environ["LLVM_PROFILE_FILE"]
+    return env
+
+
 def gnu_version():
     out = subprocess.run([GMAKE, "--version"], capture_output=True, text=True).stdout
     try:
@@ -82,7 +89,7 @@ def generate(rng, d: Path):
 def run(binary, d: Path):
     (d / "log").unlink(missing_ok=True)
     r = subprocess.run([binary, "--no-print-directory"], cwd=d, capture_output=True,
-                       text=True, timeout=60, env={"PATH": "/usr/bin:/bin"})
+                       text=True, timeout=60, env=clean_env({"PATH": "/usr/bin:/bin"}))
     log = (d / "log").read_text().split("\n") if (d / "log").exists() else []
     # `name` or `name N`: N is $(MAKE_RESTARTS), empty before a restart.
     entries = [tuple((l.split() + ["0"])[:2]) for l in log if l.strip()]
