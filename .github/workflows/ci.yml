@@ -59,11 +59,20 @@ jobs:
             echo "::error::a headline theorem depends on sorryAx"; exit 1
           fi
 
-      - name: Differential fuzzer (maked vs GNU make vs Lean model)
-        run: python3 benchmarks/fuzzer/fuzz_runner.py
+      - name: Differential fuzzer (maked vs GNU make vs Lean model; -q, -t, recipe-less rules)
+        run: python3 benchmarks/fuzzer/fuzz_runner.py 200
+
+      - name: Pattern-rule fuzzer (maked vs GNU make vs Lean Pattern spec, subdirectories)
+        run: python3 benchmarks/fuzzer/pattern_fuzz.py 300
+
+      - name: Remaking-makefiles fuzzer (vs GNU make; no recipe runs twice per invocation)
+        run: python3 benchmarks/fuzzer/remake_fuzz.py 150
 
       - name: Schedule fuzzer (real -jN schedules checked by the Lean model)
         run: python3 benchmarks/fuzzer/schedule_fuzz.py 25
 
       - name: Cache/hash fuzzer (--cache restores byte-identical outputs; --hash ignores touches)
         run: python3 benchmarks/fuzzer/cache_fuzz.py 10
+
+      - name: Complexity guard (4x input must not take more than 7x time)
+        run: python3 benchmarks/scaling/scaling_check.py

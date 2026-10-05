@@ -1,6 +1,6 @@
 # Inside maked: a make in Rust, a model in Lean, and the benchmark that lied
 
-*Dmytro Yemelianov · October 2026 · [maked v0.2.2](https://github.com/dmytro-yemelianov/maked/releases/tag/v0.2.2)*
+*Dmytro Yemelianov · October 2026 · [maked v0.2.3](https://github.com/dmytro-yemelianov/maked/releases/tag/v0.2.3)*
 
 maked ("make + ed: Yemelianov (Emelyanov) Dmytro") is a POSIX make (IEEE Std 1003.1) with
 the GNU extensions people actually use. It is written in Rust with zero
@@ -102,8 +102,8 @@ a bug in the hashing.
 
 ## 2. The Lean 4 model, and what it is not
 
-`lean_make/` is an executable model of make in Lean 4, with about 1,400
-lines across seven modules:
+`lean_make/` is an executable model of make in Lean 4, with about 2,000
+lines across nine modules:
 
 - `Syntax`: rules and targets;
 - `Semantics`: rule execution against a filesystem with a logical clock;
@@ -111,16 +111,21 @@ lines across seven modules:
 - `CriticalPath`: longest weighted path and schedule bounds;
 - `Cache`: the CAS model;
 - `Scheduling`: `-jN` schedules and how good a greedy scheduler is;
-- `Theorems`: the proofs.
+- `RunOnce`: remaking the makefiles and then the goals, with one record;
+- `Pattern`: how a pattern rule matches a target in a subdirectory;
+- `Theorems`: the proofs about rule execution.
 
-There are **58 theorems** (28 of them in `Scheduling`, mostly lemmas about
+There are **88 theorems** (28 of them in `Scheduling`, mostly lemmas about
 finite sums), all kernel-checked, with no `sorry` and no `admit`. CI fails
 if either word appears, and also if `#print axioms` shows a headline theorem
-depending on `sorryAx`. They fall into five groups:
+depending on `sorryAx`. They fall into seven groups:
 
 - **Rebuild semantics.** A phony target always rebuilds
-  (`phony_always_rebuilds`). A missing target always rebuilds
-  (`missing_always_rebuilds`). An up-to-date target needs no rebuild and
+  (`phony_always_rebuilds`). A missing target is always remade, with or
+  without a recipe (`missing_target_always_remade`); with neither
+  prerequisites nor a recipe it counts as just updated, which is the
+  `FORCE:` idiom (`force_rule_rebuilt`), and an existing file without a
+  recipe keeps its mtime (`recipeless_present_keeps_mtime`). An up-to-date target needs no rebuild and
   leaves the filesystem and the clock unchanged
   (`executeRule_upToDate_idempotent`, `…_fs_invariant`,
   `…_clock_invariant`). A rebuilt target ends up strictly newer than its
@@ -135,6 +140,19 @@ depending on `sorryAx`. They fall into five groups:
 - **Cache.** A store followed by a lookup hits. A cache hit does not run the
   recipe. Running twice is idempotent. Changing the recipe or the
   dependency hashes changes the key.
+- **Run once.** Remaking the makefiles and then building the goals with one
+  shared record runs no recipe twice (`no_recipe_runs_twice`), and a target
+  remade with the makefiles keeps that outcome for the goals
+  (`remade_with_makefiles_is_done`). Both follow from one invariant: once a
+  target has an outcome, evaluation never changes it (`evalTarget_inv`).
+- **Pattern rules.** `matchTarget` is GNU make's rule for matching a pattern
+  without `/` against a path: match the file name, then put the directory
+  back in front of each pattern-made prerequisite. The target is rebuilt
+  exactly from the match (`matchTarget_sound`), the stem never contains the
+  directory (`matchTarget_stem_no_slash`), and matching the whole path
+  instead gives the same prerequisites whenever both patterns start with
+  `%` (`whole_path_agrees`), but not for `%.o: src/%.c`
+  (`whole_path_differs`).
 - **Scheduling with `-jN` slots.** In a discrete-time model, every job
   starts at some `S u` and holds one of `m` slots for its duration. Three
   theorems give bounds:
@@ -245,22 +263,80 @@ needs a worker.
 
 ## 3. Testing: differential, not just unit
 
-- **53 Rust tests.** They cover POSIX behavior (`-B`, `-q`, `-t`), VPATH,
+- **116 Rust tests.** They cover POSIX behavior (`-B`, `-q`, `-t`), VPATH,
   metaprogramming with `eval`/`call` and second expansion, depfiles, the
   jobserver in both directions, the CAS workflow, Ninja round-trips
   (`--emit-ninja` run by real Ninja, and `-f build.ninja` run by maked),
   the compilation database, distributed workers with fallback, and the
   TUI.
 - **A three-way differential fuzzer** (`benchmarks/fuzzer/fuzz_runner.py`).
-  It generates 50 random DAGs and puts each through four phases: initial
-  build, idempotent re-run, an incremental rebuild after modifying a leaf,
-  and the `-q` question mode. In every phase it compares the exact set of
-  rebuilt targets across maked, GNU make and the Lean model, and any
-  disagreement fails CI. The current result is 50/50. That is evidence, not
-  proof: it says nothing about Makefiles the generator never produces.
+  It generates random DAGs, with rules of every kind: with a recipe, phony,
+  aliases without a recipe, existing files without one, recipes that create
+  nothing, and `FORCE`. Each goes through five phases: initial build,
+  idempotent re-run, an incremental rebuild after modifying a leaf, `-q` and
+  `-t`. It compares the recipes that ran across maked, GNU make and the
+  Lean model, and any disagreement fails CI. CI runs 200; 500/500 pass.
+- **A pattern-rule fuzzer** (`pattern_fuzz.py`): one pattern rule, a target
+  often in a subdirectory, checked against GNU make and against the Lean
+  `Pattern` spec through `lean_make --pattern`. 300/300.
+- **A remaking-makefiles fuzzer** (`remake_fuzz.py`): included makefiles
+  with rules, present or missing, with `FORCE`, restarting make. It compares
+  every recipe that ran with GNU make, and checks the runtime form of
+  `no_recipe_runs_twice`. 200/200.
+- **A complexity guard** (`benchmarks/scaling/scaling_check.py`): each of
+  seven makefile shapes at size N and 4N; more than 7× the time fails.
 
-Every push runs all of this on CI: fmt, clippy, tests, `lake build` and the
-fuzzer.
+All of it is evidence, not proof: a fuzzer says nothing about makefiles its
+generator never produces. That is how the bugs below got through.
+
+Every push runs all of this on CI: fmt, clippy, tests, `lake build`, the
+axiom check, the fuzzers and the complexity guard.
+
+### Could the model have predicted the v0.2.2 bugs?
+
+v0.2.2 fixed two GNU-compatibility bugs found while profiling. Both had
+been through the fuzzer and the model. Asking why led to this round of
+checks:
+
+- **A recipe run twice** (git's `GIT-VERSION-FILE: FORCE`, remade with the
+  makefiles and again for the goals). The model memoizes outcomes within
+  one build, but it never modelled the phase that remakes the makefiles.
+  `RunOnce` now does, and `no_recipe_runs_twice` is the property v0.2.1
+  violated. Run the model the v0.2.1 way, with the second phase starting
+  from nothing, and git's case logs `ver.mk` twice. This is checked by
+  evaluation, not proved.
+- **Pattern rules and directories.** No proof could have found this: the
+  spec is GNU make's manual, and nobody had written it down in Lean. Once it
+  is, `whole_path_agrees` explains why the bug hid. On the rules everyone
+  writes (`%.o: %.c`), the wrong reading and the right one coincide.
+  Reverting the fix makes the pattern fuzzer fail 156 of 300 cases.
+- **The quadratic `+=`** and **the slow musl binary** are about time, and
+  the model only describes results. The complexity guard fails at 19.8×
+  with the old `+=`. In the release workflow, `artifact_bench.py` now times
+  the shipped Linux binaries against GNU make before publishing. It fails
+  the v0.2.1 musl binary at 2.8× on its generated makefile, against a 2×
+  limit.
+
+Writing the generators found more. **The model was wrong**: a missing
+target without a recipe stayed "up to date" when its prerequisites were.
+GNU make and maked both remake it; that is how `FORCE:` works. An old
+theorem (`alias_no_rebuild_when_deps_up_to_date`) proved this wrong rule,
+which shows what a proof is worth when the definition is wrong. The
+fuzzer had never generated a rule without a recipe. With such rules, it
+found four maked bugs:
+
+- `-q` counted targets without a recipe as work;
+- `-t` created files for targets without a recipe, among them a file named
+  `FORCE`, which turns the idiom off for good, and for phony targets;
+- `-t` touched a prerequisite shared by two targets twice, because touch
+  mode settled a target once per dependent;
+- `target: prereqs ; recipe`, the one-line rule form, was not supported at
+  all, and neither was an empty recipe (`t: ;`), which GNU make uses to stop
+  implicit-rule search. The complexity guard hit this one, in a
+  `$(eval)`-generated makefile.
+
+`MAKE_RESTARTS` also leaked into recipes' environment (GNU make keeps it a
+make variable), and `-r` was not implemented.
 
 ## 4. Benchmarks
 

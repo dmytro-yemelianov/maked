@@ -11,10 +11,14 @@ Rust, plus an executable Lean 4 model of make's freshness semantics.
   (`-f build.ninja`, `--emit-ninja`), `--emit-compdb`, Chrome trace output
   (`--trace`), a live TUI (`--tui`) and remote workers.
 - `lean_make/`: the Lean 4 model, with theorems about the model (graph, -jN scheduling bounds,
-  freshness, cache key). They are kernel-checked statements about the Lean
+  freshness, cache key, no recipe running twice across the remake-makefiles
+  phase, GNU make's pattern-rule matching in subdirectories). They are kernel-checked statements about the Lean
   model and **not** a proof about the Rust binary.
-- `benchmarks/fuzzer/`: a differential fuzzer that runs maked, GNU make and
-  the Lean model on random DAGs. Agreement there is test evidence, not proof.
+- `benchmarks/fuzzer/`: differential fuzzers that run maked, GNU make and
+  the Lean model on random DAGs, pattern rules and included makefiles.
+  Agreement there is test evidence, not proof. `benchmarks/scaling/` guards
+  against superlinear slowdowns, and `benchmarks/release/` times the shipped
+  binaries against GNU make before a release is published.
 
 For the architecture, what the Lean model does and does not prove, and benchmarks
 against GNU make and Ninja, see **[Inside maked](docs/inside-maked.md)**.

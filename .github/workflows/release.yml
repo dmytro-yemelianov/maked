@@ -52,9 +52,32 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  bench:
+    name: Benchmark the Linux binaries against GNU make
+    # Tests run the binary cargo builds; this runs the ones that ship. The
+    # v0.2.1 musl binary was 4x slower than GNU make on git and nothing
+    # noticed. glibc builds must stay within 2x; musl is documented slower
+    # and only warns.
+    needs: [build]
+    runs-on: [self-hosted, raps-ci, maked]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: maked-x86_64-unknown-linux-*
+          path: bench-artifacts
+      - name: Null build vs GNU make
+        run: |
+          set -euo pipefail
+          for a in bench-artifacts/*/*.tar.gz; do tar -xzf "$a" -C bench-artifacts; done
+          python3 benchmarks/release/artifact_bench.py --warn-only '*musl*' bench-artifacts/maked-*/maked
+
   release:
     name: Publish GitHub Release
-    needs: [build]
+    needs: [build, bench]
     runs-on: [self-hosted, raps-ci, maked]
     steps:
       - uses: actions/download-artifact@v4
