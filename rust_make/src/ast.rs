@@ -27,10 +27,10 @@ pub struct VpathDirective {
 
 #[derive(Debug, Clone)]
 pub struct Makefile {
-    pub rules: HashMap<String, Rule>,
+    pub rules: crate::fxhash::FxHashMap<String, Rule>,
     pub rule_order: Vec<String>,
     pub pattern_rules: Vec<PatternRule>,
-    pub variables: HashMap<String, String>,
+    pub variables: crate::fxhash::FxHashMap<String, String>,
     pub cli_overrides: HashSet<String>,
     pub default_target: Option<String>,
     pub vpath_directives: Vec<VpathDirective>,
@@ -56,7 +56,10 @@ pub struct Makefile {
     /// several times (git: 116k stat calls for a null build against GNU
     /// make's 16k). GNU make also searches once per target per run. Shared
     /// by clones; used only in the execution phase, when rules are fixed.
-    pub rule_cache: Arc<Mutex<HashMap<String, Option<Rule>>>>,
+    pub rule_cache: Arc<Mutex<crate::fxhash::FxHashMap<String, Option<Arc<Rule>>>>>,
+    /// `$*` for targets made by a pattern rule: the directory and the stem,
+    /// recorded when the rule is chosen.
+    pub implicit_stems: Arc<Mutex<crate::fxhash::FxHashMap<String, String>>>,
 }
 
 // `$(eval NAME := value)` met while expanding recipes: the makefile is
@@ -115,10 +118,10 @@ impl Default for Makefile {
 impl Makefile {
     pub fn new() -> Self {
         let mut mf = Self {
-            rules: HashMap::new(),
+            rules: Default::default(),
             rule_order: Vec::new(),
             pattern_rules: Vec::new(),
-            variables: HashMap::new(),
+            variables: Default::default(),
             cli_overrides: HashSet::new(),
             default_target: None,
             vpath_directives: Vec::new(),
@@ -129,7 +132,8 @@ impl Makefile {
             defaults: HashSet::new(),
             included: Vec::new(),
             missing_includes: Vec::new(),
-            rule_cache: Arc::new(Mutex::new(HashMap::new())),
+            rule_cache: Arc::new(Mutex::new(crate::fxhash::FxHashMap::default())),
+            implicit_stems: Default::default(),
             target_variables: HashMap::new(),
             has_second_expansion: false,
             eval_queue: Arc::new(Mutex::new(Vec::new())),
@@ -221,6 +225,25 @@ impl Makefile {
         let idx = self.pattern_rules.len();
         self.pattern_rules.push(rule);
         idx
+    }
+
+    /// `VAR += text` for a variable defined in the makefile (not a built-in
+    /// default, not only in the environment): append without copying the
+    /// value. Returns false when the caller must take the general path.
+    pub fn append_in_place(&mut self, key: &str, text: &str) -> bool {
+        if self.defaults.contains(key) {
+            return false;
+        }
+        match self.variables.get_mut(key) {
+            Some(v) => {
+                if !v.is_empty() && !text.is_empty() {
+                    v.push(' ');
+                }
+                v.push_str(text);
+                true
+            }
+            None => false,
+        }
     }
 
     /// `override VAR = value`: set even over a command-line definition.
@@ -444,14 +467,17 @@ impl Makefile {
     }
 
     /// Try to find an explicit rule or synthesize one from pattern rules (e.g. %.o: %.c)
-    pub fn get_rule(&self, target: &str) -> Option<Rule> {
+    /// The rule that builds `target` (explicit, implicit or `.DEFAULT`).
+    /// Shared, not copied: the executor asks for the same rule several
+    /// times, and git's objects carry ~100 prerequisites each.
+    pub fn get_rule(&self, target: &str) -> Option<Arc<Rule>> {
         if !in_execution_phase() {
-            return self.find_rule(target);
+            return self.find_rule(target).map(Arc::new);
         }
         if let Some(hit) = self.rule_cache.lock().unwrap().get(target) {
             return hit.clone();
         }
-        let found = self.find_rule(target);
+        let found = self.find_rule(target).map(Arc::new);
         self.rule_cache
             .lock()
             .unwrap()
@@ -462,6 +488,7 @@ impl Makefile {
     /// Forget cached `get_rule` results (after rules change).
     pub fn clear_rule_cache(&self) {
         self.rule_cache.lock().unwrap().clear();
+        self.implicit_stems.lock().unwrap().clear();
     }
 
     fn find_rule(&self, target: &str) -> Option<Rule> {
@@ -489,18 +516,27 @@ impl Makefile {
             }
         }
 
+        // Without vpath, `resolve_path` would only stat the same name again.
+        let has_vpath = self.has_vpath();
         for p_rule in ordered_pattern_rules {
-            if let Some(stem) = match_pattern(&p_rule.target_pattern, target) {
+            if let Some((dir, stem)) = match_rule_target(&p_rule.target_pattern, target) {
                 let mut concrete_prereqs = Vec::new();
                 let mut all_prereqs_viable = true;
 
                 for p_dep in &p_rule.prereq_patterns {
-                    let dep_name = p_dep.replace('%', &stem);
+                    // GNU make: the target's directory goes back in front of
+                    // each prerequisite made from a pattern (`%.o: src/%.c`
+                    // makes `a/b.o` from `a/src/b.c`); a plain name is as is.
+                    let dep_name = if p_dep.contains('%') {
+                        format!("{dir}{}", p_dep.replacen('%', &stem, 1))
+                    } else {
+                        p_dep.clone()
+                    };
                     let dep_candidates = self.expand_prerequisites(target, &[dep_name]);
                     for candidate in dep_candidates {
-                        if Path::new(&candidate).exists()
-                            || self.rules.contains_key(&candidate)
-                            || self.resolve_path(&candidate).is_some()
+                        if self.rules.contains_key(&candidate)
+                            || Path::new(&candidate).exists()
+                            || (has_vpath && self.resolve_path(&candidate).is_some())
                         {
                             concrete_prereqs.push(candidate);
                         } else {
@@ -514,6 +550,10 @@ impl Makefile {
                 }
 
                 if all_prereqs_viable {
+                    self.implicit_stems
+                        .lock()
+                        .unwrap()
+                        .insert(target.to_string(), format!("{dir}{stem}"));
                     let mut prereqs = concrete_prereqs;
                     if let Some(r) = explicit {
                         let exp_prereqs = self.expand_prerequisites(target, &r.prereqs);
@@ -558,6 +598,19 @@ impl Makefile {
 
         None
     }
+}
+
+/// Match a pattern rule's target pattern, as GNU make does: a pattern with
+/// no `/` is matched against the file name alone. Returns the directory
+/// part (with its trailing `/`, or empty) and the stem.
+fn match_rule_target<'t>(pattern: &str, target: &'t str) -> Option<(&'t str, String)> {
+    if !pattern.contains('/') {
+        if let Some(i) = target.rfind('/') {
+            let (dir, name) = target.split_at(i + 1);
+            return match_pattern(pattern, name).map(|stem| (dir, stem));
+        }
+    }
+    match_pattern(pattern, target).map(|stem| ("", stem))
 }
 
 pub fn match_pattern(pattern: &str, target: &str) -> Option<String> {

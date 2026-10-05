@@ -300,7 +300,9 @@ fn real_main() -> ExitCode {
     };
 
     let is_ninja = chosen_path.to_str().is_some_and(|s| s.ends_with(".ninja"));
-    let mut makefile = if is_ninja {
+    // The process ends with this function, so the makefile and the graph are
+    // never freed: dropping 100k rules one by one only delays the exit.
+    let mut makefile = std::mem::ManuallyDrop::new(if is_ninja {
         match maked::ninja::parse_ninja_content(&content) {
             Ok(mf) => mf,
             Err(e) => {
@@ -316,7 +318,7 @@ fn real_main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
-    };
+    });
 
     if print_database {
         println!("# Variables");
@@ -356,12 +358,13 @@ fn real_main() -> ExitCode {
     // Parsing is done: rules are fixed from here on, so rule lookups can be
     // cached and `$(eval)` assignments go to the runtime overlay.
     maked::ast::enter_execution_phase();
-    let graph = DependencyGraph::from_makefile(&makefile);
+    let graph = std::mem::ManuallyDrop::new(DependencyGraph::from_makefile(&makefile));
 
     // GNU make's "How Makefiles Are Remade": bring included makefiles (and
     // the makefile itself) that have rules up to date first; if any of them
     // changed or appeared, start over so the new contents are read. This runs
     // even under -n, as in GNU make.
+    let mut remade = None;
     if !is_ninja {
         let mut candidates: Vec<String> = Vec::new();
         let main_mf = chosen_path.to_string_lossy().to_string();
@@ -413,7 +416,7 @@ fn real_main() -> ExitCode {
                     }
                 }
             }
-            drop(remaker);
+            remade = Some(remaker.into_settled());
             if mtimes(&candidates) != before {
                 let restarts: u32 = env::var("MAKE_RESTARTS")
                     .ok()
@@ -581,7 +584,10 @@ fn real_main() -> ExitCode {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "maked".to_string());
 
-    let executor = Executor::with_jobserver(&makefile, &graph, config, jobserver);
+    let mut executor = Executor::with_jobserver(&makefile, &graph, config, jobserver);
+    if let Some(settled) = remade {
+        executor = executor.with_settled(settled);
+    }
     // Recipes inherit MAKEFLAGS and exported variables from this process's
     // environment (set once here, before any worker thread exists).
     {

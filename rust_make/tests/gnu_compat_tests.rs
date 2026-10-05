@@ -516,6 +516,44 @@ fn included_makefiles_are_remade_and_reread() {
 }
 
 #[test]
+fn pattern_without_slash_matches_the_file_name() {
+    // The directory comes off before matching and goes back in front of
+    // each prerequisite made from a pattern; `$*` keeps it.
+    assert_same(
+        &[
+            ("a/src/b.c", ""),
+            ("src/a/b.c", ""),
+            ("hdr.h", ""),
+            ("a/src/eat.in", ""),
+            (
+                "Makefile",
+                "all: a/b.o a/eat\n%.o: src/%.c hdr.h\n\t@echo '$@ <- $^ stem=$*'\n\
+                 e%t: src/e%t.in\n\t@echo '$@ <- $^ stem=$*'\n",
+            ),
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn target_remade_with_the_makefiles_is_not_remade_again() {
+    // git's GIT-VERSION-FILE: a FORCE rule for an included file whose
+    // recipe leaves it unchanged. GNU make runs it once, while remaking the
+    // makefiles, and takes it as done for the goals.
+    assert_same(
+        &[
+            ("ver.mk", "V = 1\n"),
+            (
+                "Makefile",
+                "all: out\n\t@echo v=$(V)\nout: ver.mk\n\t@touch $@\n\
+                 ver.mk: FORCE\n\t@echo gen\nFORCE:\n-include ver.mk\n",
+            ),
+        ],
+        &[],
+    );
+}
+
+#[test]
 fn backslash_newline_in_variables_and_recipes() {
     assert_same(
         &[(

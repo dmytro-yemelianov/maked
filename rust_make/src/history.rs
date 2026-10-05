@@ -76,11 +76,15 @@ impl DurationLog {
 /// largest bottom level among its dependents. Iterative (Kahn order on the
 /// reversed graph), so deep graphs cannot overflow the stack. Nodes left on a
 /// cycle keep only their own duration.
-pub fn bottom_levels(
-    nodes: &HashSet<String>,
-    dependents: &HashMap<String, Vec<String>>,
+pub fn bottom_levels<S1, S2>(
+    nodes: &HashSet<String, S1>,
+    dependents: &HashMap<String, Vec<String>, S2>,
     log: &DurationLog,
-) -> HashMap<String, u64> {
+) -> HashMap<String, u64>
+where
+    S1: std::hash::BuildHasher,
+    S2: std::hash::BuildHasher,
+{
     let known: Vec<u64> = nodes
         .iter()
         .filter_map(|n| log.durations.get(n).copied())

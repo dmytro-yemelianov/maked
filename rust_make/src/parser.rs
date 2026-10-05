@@ -987,6 +987,12 @@ fn split_top_level_args(s: &str) -> Vec<&str> {
 }
 
 fn find_top_level_char(s: &str, target_ch: char) -> Option<usize> {
+    // Fast path: the first occurrence is at top level unless a `(` or `{`
+    // opens before it (and a line without the character at all is common).
+    let first = s.find(target_ch)?;
+    if !s[..first].contains(['(', '{']) {
+        return Some(first);
+    }
     let mut paren_depth = 0;
     let mut brace_depth = 0;
     for (i, b) in s.bytes().enumerate() {
@@ -1162,7 +1168,10 @@ fn automatic_var(
         "*" => target
             .map(|t| match makefile.static_stems.get(t) {
                 Some(stem) => vec![stem.clone()],
-                None => vec![t.rfind('.').map_or(t, |i| &t[..i]).to_string()],
+                None => match makefile.implicit_stems.lock().unwrap().get(t) {
+                    Some(stem) => vec![stem.clone()],
+                    None => vec![t.rfind('.').map_or(t, |i| &t[..i]).to_string()],
+                },
             })
             .unwrap_or_default(),
         "|" => order_only.to_vec(),
@@ -1260,9 +1269,9 @@ fn ends_with_unescaped_backslash(line: &str) -> bool {
 /// Recipe lines keep `\`+newline for the shell, dropping one leading tab
 /// from each continuation line. Other lines turn each continuation and the
 /// whitespace around it into a single space, as GNU make does.
-fn resolve_continuations(line: &str, is_recipe: bool) -> String {
+fn resolve_continuations(line: &str, is_recipe: bool) -> std::borrow::Cow<'_, str> {
     if !line.contains(CONTINUATION) {
-        return line.to_string();
+        return std::borrow::Cow::Borrowed(line);
     }
     let mut parts = line.split(CONTINUATION);
     let mut out = parts.next().unwrap_or_default().to_string();
@@ -1277,7 +1286,7 @@ fn resolve_continuations(line: &str, is_recipe: bool) -> String {
             out.push_str(part.trim_start());
         }
     }
-    out
+    std::borrow::Cow::Owned(out)
 }
 
 /// Drop a make comment: everything from the first `#` not written as `\#`.
@@ -1619,11 +1628,17 @@ pub fn parse_makefile_into(
 
     // First pass: join line continuations (lines ending with backslash \)
     let raw_lines: Vec<&str> = content.lines().collect();
-    let mut combined_lines: Vec<(usize, String)> = Vec::new();
+    let mut combined_lines: Vec<(usize, std::borrow::Cow<'_, str>)> =
+        Vec::with_capacity(raw_lines.len());
     let mut i = 0;
 
     while i < raw_lines.len() {
         let line_num = i + 1;
+        if !ends_with_unescaped_backslash(raw_lines[i]) {
+            combined_lines.push((line_num, std::borrow::Cow::Borrowed(raw_lines[i])));
+            i += 1;
+            continue;
+        }
         let mut line = raw_lines[i].to_string();
         // Keep each backslash-newline as a marker: a recipe line passes it to
         // the shell as `\`+newline, any other line turns it and the space
@@ -1634,7 +1649,7 @@ pub fn parse_makefile_into(
             line.push(CONTINUATION);
             line.push_str(raw_lines[i]);
         }
-        combined_lines.push((line_num, line));
+        combined_lines.push((line_num, std::borrow::Cow::Owned(line)));
         i += 1;
     }
 
@@ -2041,6 +2056,18 @@ pub fn parse_makefile_into(
                     continue;
                 }
 
+                // `+=` on a variable the makefile already holds: append in
+                // place. Rebuilding the string each time is quadratic, and
+                // git's coccinelle rules do ~11,000 appends to 20 variables.
+                if is_append
+                    && (force_override || !makefile.cli_overrides.contains(&key))
+                    && makefile.append_in_place(&key, raw_val)
+                {
+                    current_target = None;
+                    process_pending_evals(makefile, cli_vars)?;
+                    continue;
+                }
+
                 let val = if is_immediate {
                     expand_variables(raw_val, makefile, None, &[])
                 } else if is_append {
@@ -2165,18 +2192,18 @@ pub fn parse_makefile_into(
 
             // Glob patterns in prerequisites expand like GNU make's: sorted
             // matches, or the word itself when nothing matches.
-            let prereqs: Vec<String> = expanded_prereqs_str
-                .split_whitespace()
-                .flat_map(|s| {
-                    if !s.contains('%') && (s.contains('*') || s.contains('?') || s.contains('[')) {
-                        let mut m = expand_wildcard(s);
+            let mut prereqs: Vec<String> = Vec::new();
+            for s in expanded_prereqs_str.split_whitespace() {
+                if !s.contains('%') && (s.contains('*') || s.contains('?') || s.contains('[')) {
+                    let mut m = expand_wildcard(s);
+                    if !m.is_empty() {
                         m.sort();
-                        if m.is_empty() { vec![s.to_string()] } else { m }
-                    } else {
-                        vec![s.to_string()]
+                        prereqs.extend(m);
+                        continue;
                     }
-                })
-                .collect();
+                }
+                prereqs.push(s.to_string());
+            }
 
             // Classic suffix rule: e.g. .c.o:
             if expanded_targets_str.starts_with('.')
@@ -2238,14 +2265,24 @@ pub fn parse_makefile_into(
                 continue;
             }
 
-            let mut targets_vec = Vec::new();
+            let mut targets_vec = Vec::with_capacity(target_tokens.len());
             line_prereqs.clear();
-            for &tgt in &target_tokens {
-                line_prereqs.insert(tgt.to_string(), prereqs.clone());
+            let last = target_tokens.len() - 1;
+            for (i, &tgt) in target_tokens.iter().enumerate() {
+                // Only a target that already has prerequisites needs this
+                // line's order restored when its recipe starts; a new rule
+                // has exactly this line's list.
+                if makefile.rules.contains_key(tgt) {
+                    line_prereqs.insert(tgt.to_string(), prereqs.clone());
+                }
                 let is_phony = phony_targets.contains(tgt);
                 let rule = Rule {
                     target: tgt.to_string(),
-                    prereqs: prereqs.clone(),
+                    prereqs: if i == last {
+                        std::mem::take(&mut prereqs)
+                    } else {
+                        prereqs.clone()
+                    },
                     commands: Vec::new(),
                     is_phony,
                     line_number: line_num,

@@ -4,6 +4,7 @@ pub mod compdb;
 pub mod distributed;
 pub mod executor;
 pub mod freshness;
+pub mod fxhash;
 pub mod graph;
 pub mod hash;
 pub mod history;

@@ -53,6 +53,24 @@ pub fn evaluate_freshness(
     rebuilt_prereqs: bool,
     newest_prereq_time: Option<SystemTime>,
 ) -> FreshnessDecision {
+    evaluate_freshness_with(
+        rule,
+        always_make,
+        rebuilt_prereqs,
+        newest_prereq_time,
+        get_file_mtime(&rule.target),
+    )
+}
+
+/// `evaluate_freshness` with the target's mtime supplied by the caller, so
+/// the executor can take it from its per-build mtime cache.
+pub fn evaluate_freshness_with(
+    rule: &Rule,
+    always_make: bool,
+    rebuilt_prereqs: bool,
+    newest_prereq_time: Option<SystemTime>,
+    target_mtime: Option<SystemTime>,
+) -> FreshnessDecision {
     if always_make {
         return FreshnessDecision::NeedsRebuild(RebuildReason::AlwaysMakeFlag);
     }
@@ -68,7 +86,7 @@ pub fn evaluate_freshness(
         return FreshnessDecision::NeedsRebuild(RebuildReason::PhonyTarget);
     }
 
-    let target_mtime = match get_file_mtime(&rule.target) {
+    let target_mtime = match target_mtime {
         Some(t) => t,
         None => {
             // POSIX Alias Rule: If target has no commands and no file on disk,

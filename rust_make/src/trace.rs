@@ -134,6 +134,12 @@ impl TraceCollector {
                 durations.insert(ev.name.clone(), ev.dur);
             }
         }
+        drop(events);
+        // Nothing ran (a null build): every path has length 0 and the walk
+        // below would only return the root.
+        if durations.is_empty() {
+            return (0, vec![root.to_string()]);
+        }
 
         // Longest latency path by post-order DP. Iterative (explicit stack) so
         // deep chains cannot overflow the thread stack, and each node stores
