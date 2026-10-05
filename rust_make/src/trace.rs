@@ -4,6 +4,46 @@ use std::io::{self, BufWriter, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+/// How close a run came to the best possible schedule with `jobs` slots.
+///
+/// Every valid schedule takes at least `lower_bound_us` =
+/// max(critical path, ⌈work / jobs⌉) (`work_le_slots_mul_makespan`,
+/// `chain_dur_le_finish`), and a greedy one at most `graham_bound_us` =
+/// work / jobs + critical path (`greedy_makespan_bound`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScheduleBounds {
+    pub work_us: u64,
+    pub span_us: u64,
+    pub critical_path_us: u64,
+    pub jobs: usize,
+    pub lower_bound_us: u64,
+    pub graham_bound_us: u64,
+}
+
+impl ScheduleBounds {
+    pub fn new(work_us: u64, span_us: u64, critical_path_us: u64, jobs: usize) -> Self {
+        let m = jobs.max(1) as u64;
+        Self {
+            work_us,
+            span_us,
+            critical_path_us,
+            jobs,
+            lower_bound_us: critical_path_us.max(work_us.div_ceil(m)),
+            graham_bound_us: work_us / m + critical_path_us,
+        }
+    }
+
+    /// Measured span over the lower bound: 1.00 means no schedule could
+    /// have been shorter.
+    pub fn gap(&self) -> f64 {
+        if self.lower_bound_us == 0 {
+            1.0
+        } else {
+            self.span_us as f64 / self.lower_bound_us as f64
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TraceEvent {
     pub name: String,
@@ -135,6 +175,27 @@ impl TraceCollector {
         }
         path.reverse();
         (total, path)
+    }
+
+    /// Measured schedule against the bounds proved in
+    /// `lean_make/LeanMake/Scheduling.lean`, from the recorded rule events.
+    /// `critical_path_us` is the longest dependency chain (see
+    /// `compute_critical_path`). `None` when no rule did any work.
+    pub fn schedule_bounds(&self, jobs: usize, critical_path_us: u64) -> Option<ScheduleBounds> {
+        let events = self.events.lock().unwrap();
+        let rules: Vec<&TraceEvent> = events
+            .iter()
+            .filter(|e| e.ph == "X" && e.cat == "rule" && e.dur > 0)
+            .collect();
+        let first = rules.iter().map(|e| e.ts).min()?;
+        let last = rules.iter().map(|e| e.ts + e.dur).max()?;
+        let work_us: u64 = rules.iter().map(|e| e.dur).sum();
+        Some(ScheduleBounds::new(
+            work_us,
+            last - first,
+            critical_path_us,
+            jobs,
+        ))
     }
 
     /// Save Chrome Trace / Perfetto compatible JSON
@@ -291,5 +352,27 @@ mod tests {
             path.last().map(String::as_str),
             Some(&*format!("n{}", N - 1))
         );
+    }
+
+    #[test]
+    fn test_schedule_bounds_two_slots() {
+        // Three independent 10us jobs on 2 slots: a, b at 0; c at 10.
+        let collector = TraceCollector::new();
+        collector.record_complete("a".into(), "rule", 0, 10, 1, 1, HashMap::new());
+        collector.record_complete("b".into(), "rule", 0, 10, 1, 2, HashMap::new());
+        collector.record_complete("c".into(), "rule", 10, 10, 1, 1, HashMap::new());
+        let b = collector.schedule_bounds(2, 10).unwrap();
+        assert_eq!(b.work_us, 30);
+        assert_eq!(b.span_us, 20);
+        assert_eq!(b.lower_bound_us, 15); // max(CP 10, ceil(30 / 2))
+        assert_eq!(b.graham_bound_us, 25); // 30 / 2 + 10
+        assert!((b.gap() - 20.0 / 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_schedule_bounds_none_without_work() {
+        let collector = TraceCollector::new();
+        collector.record_complete("a".into(), "rule", 5, 0, 1, 1, HashMap::new());
+        assert_eq!(collector.schedule_bounds(4, 0), None);
     }
 }

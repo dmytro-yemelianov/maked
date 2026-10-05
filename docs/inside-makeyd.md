@@ -102,18 +102,21 @@ a bug in the hashing.
 
 ## 2. The Lean 4 model, and what it is not
 
-`lean_make/` is an executable model of make in Lean 4, with about 1,050
-lines across six modules:
+`lean_make/` is an executable model of make in Lean 4, with about 1,400
+lines across seven modules:
 
 - `Syntax`: rules and targets;
 - `Semantics`: rule execution against a filesystem with a logical clock;
 - `Graph`: fuel-bounded cycle detection;
 - `CriticalPath`: longest weighted path and schedule bounds;
 - `Cache`: the CAS model;
+- `Scheduling`: `-jN` schedules and how good a greedy scheduler is;
 - `Theorems`: the proofs.
 
-There are **30 theorems**, all kernel-checked, with no `sorry` and no
-`admit`. CI fails if either word appears. They fall into four groups:
+There are **49 theorems** (19 of them in `Scheduling`, mostly lemmas about
+finite sums), all kernel-checked, with no `sorry` and no `admit`. CI fails
+if either word appears, and also if `#print axioms` shows a headline theorem
+depending on `sorryAx`. They fall into five groups:
 
 - **Rebuild semantics.** A phony target always rebuilds
   (`phony_always_rebuilds`). A missing target always rebuilds
@@ -132,6 +135,20 @@ There are **30 theorems**, all kernel-checked, with no `sorry` and no
 - **Cache.** A store followed by a lookup hits. A cache hit does not run the
   recipe. Running twice is idempotent. Changing the recipe or the
   dependency hashes changes the key.
+- **Scheduling with `-jN` slots.** In a discrete-time model, every job
+  starts at some `S u` and holds one of `m` slots for its duration. Three
+  theorems give bounds:
+  - any valid schedule that finishes by `C` has `W ≤ m·C`, where `W` is
+    the total work (`work_le_slots_mul_makespan`);
+  - no dependency chain finishes faster than the sum of its durations
+    (`chain_dur_le_finish`);
+  - a greedy schedule, which never leaves a ready job waiting while a slot
+    is free, satisfies `C ≤ W/m + L`, where `L` is the critical path
+    (`greedy_makespan_bound`, Graham's list-scheduling bound).
+
+  Together these say that no schedule beats `max(L, W/m)` and that a greedy
+  one is within 2× of that. Finding the optimal schedule is NP-hard, so the
+  model gives bounds, not an optimal strategy.
 
 Precision matters here, because "formally verified" gets used loosely:
 
@@ -147,6 +164,32 @@ Precision matters here, because "formally verified" gets used loosely:
 - **Cycle detection is fuel-bounded.** It now returns an explicit
   `fuelExhausted` result instead of silently answering "acyclic", which is
   what an earlier version did.
+
+### Using the bounds: `--profile`
+
+`makeyd --profile` measures each run against those bounds. It takes rule
+durations from the trace, timed only once a job holds a jobserver slot, so
+waiting for a slot is not counted as work. Here is Lua 5.4.9 built directly
+in `src/` (all compiles visible to one scheduler) on the M5:
+
+| `-j` | Total work | Measured span | Lower bound | Greedy bound | Gap to optimum |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 3,694 ms | 1,867 ms | 1,847 ms | 2,234 ms | ≤ 1.01× |
+| 4 | 4,123 ms | 1,135 ms | 1,031 ms | 1,460 ms | ≤ 1.10× |
+| 8 | 5,901 ms | 893 ms | 738 ms | 1,380 ms | ≤ 1.21× |
+
+Every run lands inside the greedy bound, as the theorem predicts if the
+executor is greedy. The gap column is an upper bound on how much any
+reordering could still win, because the lower bound is not always
+achievable. It shows little headroom at `-j2` and `-j4`. At `-j8` part of
+the 21% is not scheduling at all: total work rises from 3.7 s to 5.9 s
+because every compile slows down when more of them share the CPU (the M5
+mixes performance and efficiency cores).
+
+Two limits apply. That makeyd's executor is greedy is an argument about the
+Rust code, not a proof: ready targets go straight into a queue that `m`
+workers drain. And a recursive `$(MAKE)` appears as a single job whose time
+includes the whole sub-make.
 
 ## 3. Testing: differential, not just unit
 
@@ -331,7 +374,11 @@ microcontrollers would be a different product.
   them.
 - The macOS binaries are not notarized.
 - No refinement proof connects the Lean model and the Rust code. The fuzzer
-  is the bridge.
+  is the bridge. It does not yet check schedules against the Lean bounds;
+  only `--profile` reports them.
+- The ready queue is FIFO. A longest-remaining-path-first order would keep
+  the greedy bound and might close part of the `-j8` gap. The `--profile`
+  numbers above say how much it could win at most.
 
 The code, the benchmark harness and its raw JSON are all in the repository:
 <https://github.com/dmytro-yemelianov/makeyd>.

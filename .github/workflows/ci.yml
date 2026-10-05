@@ -55,6 +55,10 @@ jobs:
           if grep -rnwE 'sorry|admit' LeanMake LeanMake.lean Main.lean; then
             echo "::error::sorry/admit present in Lean sources"; exit 1
           fi
+          lake env lean scripts/axioms.lean | tee axioms.log
+          if grep -q sorryAx axioms.log; then
+            echo "::error::a headline theorem depends on sorryAx"; exit 1
+          fi
 
       - name: Differential fuzzer (makeyd vs GNU make vs Lean model)
         run: python3 benchmarks/fuzzer/fuzz_runner.py

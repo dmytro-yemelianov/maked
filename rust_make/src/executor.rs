@@ -38,6 +38,8 @@ pub struct ExecutionStats {
     pub elapsed_wall_time: std::time::Duration,
     pub critical_path_duration: std::time::Duration,
     pub critical_path: Vec<String>,
+    /// Measured schedule against the Lean-proved lower and Graham bounds.
+    pub schedule: Option<crate::trace::ScheduleBounds>,
 }
 
 #[derive(Debug, Clone)]
@@ -271,6 +273,7 @@ impl<'a> Executor<'a> {
             elapsed_wall_time: std::time::Duration::ZERO,
             critical_path_duration: std::time::Duration::ZERO,
             critical_path: Vec::new(),
+            schedule: None,
         };
 
         let status = self.doname(root, &mut target_statuses, &mut stats)?;
@@ -290,6 +293,7 @@ impl<'a> Executor<'a> {
         let (crit_us, crit_path) = self.tracer.compute_critical_path(&self.graph.adj, root);
         stats.critical_path_duration = std::time::Duration::from_micros(crit_us);
         stats.critical_path = crit_path;
+        stats.schedule = self.tracer.schedule_bounds(1, crit_us);
         stats.elapsed_wall_time = start_time.elapsed();
         self.tui.finish();
         Ok(stats)
@@ -662,8 +666,8 @@ impl<'a> Executor<'a> {
                     }
 
                     tui_clone.target_started(worker_id, &task);
-                    let start_ts = tracer_clone.start_micros();
-                    let rule_start = Instant::now();
+                    let mut start_ts = tracer_clone.start_micros();
+                    let mut rule_start = Instant::now();
 
                     let rule = match makefile.get_rule(&task) {
                         Some(r) => r,
@@ -758,6 +762,10 @@ impl<'a> Executor<'a> {
                                     break;
                                 }
                             };
+                            // The job's duration starts once it holds a slot;
+                            // waiting for a token is queueing, not work.
+                            start_ts = tracer_clone.start_micros();
+                            rule_start = Instant::now();
 
                             if config.touch_only {
                                 let _ = std::fs::OpenOptions::new()
@@ -1128,6 +1136,7 @@ impl<'a> Executor<'a> {
             elapsed_wall_time: start_time.elapsed(),
             critical_path_duration: std::time::Duration::from_micros(crit_us),
             critical_path: crit_path,
+            schedule: self.tracer.schedule_bounds(self.config.jobs, crit_us),
         })
     }
 

@@ -402,6 +402,26 @@ fn real_main() -> ExitCode {
                         );
                         println!("  Critical path dur:    {:?}", stats.critical_path_duration);
                     }
+                    if let Some(b) = stats.schedule {
+                        let ms = |us: u64| us as f64 / 1000.0;
+                        println!("  Schedule (-j{}):", b.jobs);
+                        println!("    Total work:         {:.1} ms", ms(b.work_us));
+                        println!("    Measured span:      {:.1} ms", ms(b.span_us));
+                        println!(
+                            "    Lower bound:        {:.1} ms  (max of critical path, work / {})",
+                            ms(b.lower_bound_us),
+                            b.jobs
+                        );
+                        println!(
+                            "    Greedy bound:       {:.1} ms  (work / {} + critical path)",
+                            ms(b.graham_bound_us),
+                            b.jobs
+                        );
+                        println!(
+                            "    Gap to optimum:     <= {:.2}x  (span / lower bound)",
+                            b.gap()
+                        );
+                    }
                     if let Some(ref tf) = trace_file {
                         println!("  Perfetto trace log:   {tf}");
                     }

@@ -5,3 +5,4 @@ import LeanMake.Semantics
 import LeanMake.Theorems
 import LeanMake.CriticalPath
 import LeanMake.Cache
+import LeanMake.Scheduling

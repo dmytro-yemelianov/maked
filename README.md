@@ -8,7 +8,7 @@ Rust, plus an executable Lean 4 model of make's freshness semantics.
   content-addressable cache (`--cache`), Ninja import and export
   (`-f build.ninja`, `--emit-ninja`), `--emit-compdb`, Chrome trace output
   (`--trace`), a live TUI (`--tui`) and remote workers.
-- `lean_make/`: the Lean 4 model, with theorems about the model (graph,
+- `lean_make/`: the Lean 4 model, with theorems about the model (graph, -jN scheduling bounds,
   freshness, cache key). They are kernel-checked statements about the Lean
   model and **not** a proof about the Rust binary.
 - `benchmarks/fuzzer/`: a differential fuzzer that runs makeyd, GNU make and
