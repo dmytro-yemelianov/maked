@@ -58,8 +58,12 @@ pub fn evaluate_freshness(
     }
 
     if rule.is_phony {
-        if rule.commands.is_empty() && !rebuilt_prereqs && newest_prereq_time.is_some() {
-            return FreshnessDecision::UpToDate(newest_prereq_time.unwrap());
+        if let (true, false, Some(t)) = (
+            rule.commands.is_empty(),
+            rebuilt_prereqs,
+            newest_prereq_time,
+        ) {
+            return FreshnessDecision::UpToDate(t);
         }
         return FreshnessDecision::NeedsRebuild(RebuildReason::PhonyTarget);
     }
@@ -70,8 +74,12 @@ pub fn evaluate_freshness(
             // POSIX Alias Rule: If target has no commands and no file on disk,
             // it acts as a virtual group/alias. If prerequisites are all up to date,
             // the alias target inherits the newest prerequisite timestamp and is UP TO DATE!
-            if rule.commands.is_empty() && !rebuilt_prereqs && newest_prereq_time.is_some() {
-                return FreshnessDecision::UpToDate(newest_prereq_time.unwrap());
+            if let (true, false, Some(t)) = (
+                rule.commands.is_empty(),
+                rebuilt_prereqs,
+                newest_prereq_time,
+            ) {
+                return FreshnessDecision::UpToDate(t);
             }
             return FreshnessDecision::NeedsRebuild(RebuildReason::TargetMissing);
         }

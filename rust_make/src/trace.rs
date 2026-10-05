@@ -62,6 +62,12 @@ pub struct TraceCollector {
     events: Arc<Mutex<Vec<TraceEvent>>>,
 }
 
+impl Default for TraceCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TraceCollector {
     pub fn new() -> Self {
         Self {
@@ -74,6 +80,8 @@ impl TraceCollector {
         self.start_time.elapsed().as_micros() as u64
     }
 
+    // One argument per Chrome Trace event field.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_complete(
         &self,
         name: String,

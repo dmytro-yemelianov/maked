@@ -106,6 +106,12 @@ fn is_env_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+impl Default for Makefile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Makefile {
     pub fn new() -> Self {
         let mut mf = Self {
@@ -230,7 +236,7 @@ impl Makefile {
     /// makefile's `SHELL`, never `$SHELL` from the environment, else /bin/sh.
     pub fn recipe_env(&self) -> RecipeEnv {
         let mut names: Vec<&String> = Vec::new();
-        for (name, _) in &self.variables {
+        for name in self.variables.keys() {
             let explicit = self.exported.get(name).copied();
             let export = match explicit {
                 Some(e) => e,
@@ -423,7 +429,7 @@ impl Makefile {
 
         if let Some(vpath_var) = self.get_var("VPATH") {
             let dirs: Vec<&str> = vpath_var
-                .split(|c| c == ':' || c == ';' || c == ' ' || c == '\t')
+                .split([':', ';', ' ', '\t'])
                 .filter(|s| !s.is_empty())
                 .collect();
             for dir in dirs {
@@ -521,7 +527,7 @@ impl Makefile {
                         target: target.to_string(),
                         prereqs,
                         commands: p_rule.commands.clone(),
-                        is_phony: explicit.map_or(false, |r| r.is_phony),
+                        is_phony: explicit.is_some_and(|r| r.is_phony),
                         line_number: explicit.map_or(p_rule.line_number, |r| r.line_number),
                     });
                 }

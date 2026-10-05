@@ -125,8 +125,7 @@ impl TuiReporter {
             env!("CARGO_PKG_VERSION")
         ));
         buf.push_str(&format!(
-            "\x1b[K│ \x1b[1mProgress:\x1b[0m \x1b[32m{}\x1b[0m {:>5.1}% ({}/{} targets) │\n",
-            bar, pct, completed, total
+            "\x1b[K│ \x1b[1mProgress:\x1b[0m \x1b[32m{bar}\x1b[0m {pct:>5.1}% ({completed}/{total} targets) │\n"
         ));
         buf.push_str(&format!(
             "\x1b[K│ \x1b[1mElapsed:\x1b[0m  {:.2}s | \x1b[1mCached:\x1b[0m {} | \x1b[1mActive Workers:\x1b[0m {}/{}   │\n",
@@ -141,7 +140,7 @@ impl TuiReporter {
             let status = match (&w.target, &w.start_time) {
                 (Some(tgt), Some(start)) => {
                     let dur_ms = start.elapsed().as_millis();
-                    format!("\x1b[33mbuilding\x1b[0m {} ({}ms)", tgt, dur_ms)
+                    format!("\x1b[33mbuilding\x1b[0m {tgt} ({dur_ms}ms)")
                 }
                 _ => "\x1b[2midle\x1b[0m".to_string(),
             };
@@ -151,9 +150,9 @@ impl TuiReporter {
         buf.push_str("\x1b[K└────────────────────────────────────────────────────────────────┘\n");
 
         let num_lines = 5 + st.workers.len();
-        buf.push_str(&format!("\x1b[{}A", num_lines));
+        buf.push_str(&format!("\x1b[{num_lines}A"));
 
-        let _ = write!(out, "{}", buf);
+        let _ = write!(out, "{buf}");
         let _ = out.flush();
     }
 
@@ -162,7 +161,7 @@ impl TuiReporter {
         if st.enabled && st.is_tty {
             let mut out = stdout();
             let num_lines = 5 + st.workers.len();
-            let _ = write!(out, "\x1b[{}B\x1b[?25h\n", num_lines);
+            let _ = writeln!(out, "\x1b[{num_lines}B\x1b[?25h");
             let _ = out.flush();
         }
     }

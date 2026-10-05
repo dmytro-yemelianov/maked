@@ -21,6 +21,12 @@ const K: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
+impl Default for Sha256 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Sha256 {
     pub fn new() -> Self {
         Self {
@@ -160,7 +166,7 @@ pub fn sha256_file<P: AsRef<Path>>(path: P) -> std::io::Result<[u8; 32]> {
 pub fn to_hex(bytes: &[u8; 32]) -> String {
     let mut s = String::with_capacity(64);
     for b in bytes {
-        s.push_str(&format!("{:02x}", b));
+        s.push_str(&format!("{b:02x}"));
     }
     s
 }
@@ -242,11 +248,11 @@ impl BuildDatabase {
         let mut file = fs::File::create(path)?;
         writeln!(file, "# maked Cryptographic Hash Database v1")?;
         for (target, record) in &self.records {
-            writeln!(file, "TARGET {}", target)?;
+            writeln!(file, "TARGET {target}")?;
             writeln!(file, "TARGET_HASH {}", record.target_hash)?;
             writeln!(file, "RECIPE_HASH {}", record.recipe_hash)?;
             for (pname, phash) in &record.prereq_hashes {
-                writeln!(file, "PREREQ {} {}", pname, phash)?;
+                writeln!(file, "PREREQ {pname} {phash}")?;
             }
         }
         file.flush()

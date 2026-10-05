@@ -490,12 +490,12 @@ impl<'a> Executor<'a> {
                 }
                 TargetStatus::Rebuilt(new_time) => {
                     any_dep_rebuilt = true;
-                    if newest_dep_mtime.map_or(true, |t| new_time > t) {
+                    if newest_dep_mtime.is_none_or(|t| new_time > t) {
                         newest_dep_mtime = Some(new_time);
                     }
                 }
                 TargetStatus::UpToDate(Some(dep_mtime)) => {
-                    if newest_dep_mtime.map_or(true, |t| dep_mtime > t) {
+                    if newest_dep_mtime.is_none_or(|t| dep_mtime > t) {
                         newest_dep_mtime = Some(dep_mtime);
                     }
                 }
@@ -864,12 +864,12 @@ impl<'a> Executor<'a> {
                                     }
                                     TargetStatus::Rebuilt(t) => {
                                         any_dep_rebuilt = true;
-                                        if newest_dep_mtime.map_or(true, |cur| *t > cur) {
+                                        if newest_dep_mtime.is_none_or(|cur| *t > cur) {
                                             newest_dep_mtime = Some(*t);
                                         }
                                     }
                                     TargetStatus::UpToDate(Some(t)) => {
-                                        if newest_dep_mtime.map_or(true, |cur| *t > cur) {
+                                        if newest_dep_mtime.is_none_or(|cur| *t > cur) {
                                             newest_dep_mtime = Some(*t);
                                         }
                                     }

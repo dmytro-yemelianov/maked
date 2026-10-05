@@ -280,8 +280,6 @@ pub fn makeflags_to_args(makeflags: &str) -> Vec<String> {
         }
         if first && !w.starts_with('-') && !w.contains('=') {
             out.extend(w.chars().map(|c| format!("-{c}")));
-        } else if w.contains('=') && !w.starts_with('-') {
-            out.push(w);
         } else {
             out.push(w);
         }
@@ -353,6 +351,22 @@ pub fn inherited_jobs(makeflags: &str) -> Option<usize> {
     .map(|n| n.max(1))
 }
 
+impl Drop for JobServer {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let JobServerMode::Fifo {
+            path, is_master, ..
+        } = &self.mode
+        {
+            if *is_master {
+                if let Ok(c_path) = std::ffi::CString::new(path.to_str().unwrap_or_default()) {
+                    unsafe { unlink(c_path.as_ptr()) };
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,21 +430,5 @@ mod tests {
         let t4 = master.acquire().unwrap();
         assert_eq!(t4.token_type, TokenType::Pipe);
         drop((t1, t2, t4));
-    }
-}
-
-impl Drop for JobServer {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        if let JobServerMode::Fifo {
-            path, is_master, ..
-        } = &self.mode
-        {
-            if *is_master {
-                if let Ok(c_path) = std::ffi::CString::new(path.to_str().unwrap_or_default()) {
-                    unsafe { unlink(c_path.as_ptr()) };
-                }
-            }
-        }
     }
 }

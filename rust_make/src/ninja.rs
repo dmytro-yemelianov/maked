@@ -46,12 +46,12 @@ pub fn emit_ninja(
         let cmd_key = cleaned_cmds.join(" && ");
         rule_cmd_keys.insert(rule.target.clone(), cmd_key.clone());
 
-        if !rule_names.contains_key(&cmd_key) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = rule_names.entry(cmd_key) {
             let r_name = format!("rule_{rule_counter}");
             rule_counter += 1;
             out.push_str(&format!("rule {r_name}\n"));
-            out.push_str(&format!("  command = {cmd_key}\n\n"));
-            rule_names.insert(cmd_key, r_name);
+            out.push_str(&format!("  command = {}\n\n", slot.key()));
+            slot.insert(r_name);
         }
     }
 

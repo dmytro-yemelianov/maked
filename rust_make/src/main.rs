@@ -137,9 +137,8 @@ fn real_main() -> ExitCode {
                     .map(|n| n.get())
                     .unwrap_or(4);
             }
-        } else if arg.starts_with("-j") {
+        } else if let Some(num_str) = arg.strip_prefix("-j") {
             jobs_explicit = true;
-            let num_str = &arg[2..];
             if num_str.is_empty() {
                 jobs = std::thread::available_parallelism()
                     .map(|n| n.get())
@@ -160,15 +159,15 @@ fn real_main() -> ExitCode {
         } else if arg == "-C" && i + 1 < args.len() {
             i += 1;
             chdir = Some(args[i].clone());
-        } else if arg.starts_with("--trace=") {
-            trace_file = Some(arg["--trace=".len()..].to_string());
+        } else if let Some(v) = arg.strip_prefix("--trace=") {
+            trace_file = Some(v.to_string());
         } else if arg == "--trace" && i + 1 < args.len() {
             i += 1;
             trace_file = Some(args[i].clone());
-        } else if arg.starts_with("--jobserver-auth=") {
-            jobserver_auth = Some(arg["--jobserver-auth=".len()..].to_string());
-        } else if arg.starts_with("--jobserver-fds=") {
-            jobserver_auth = Some(arg["--jobserver-fds=".len()..].to_string());
+        } else if let Some(v) = arg.strip_prefix("--jobserver-auth=") {
+            jobserver_auth = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("--jobserver-fds=") {
+            jobserver_auth = Some(v.to_string());
         } else if arg == "--cache" {
             cache = true;
         } else if let Some(dir) = arg.strip_prefix("--cache-dir=") {
@@ -298,9 +297,7 @@ fn real_main() -> ExitCode {
         }
     };
 
-    let is_ninja = chosen_path
-        .to_str()
-        .map_or(false, |s| s.ends_with(".ninja"));
+    let is_ninja = chosen_path.to_str().is_some_and(|s| s.ends_with(".ninja"));
     let mut makefile = if is_ninja {
         match maked::ninja::parse_ninja_content(&content) {
             Ok(mf) => mf,
@@ -589,10 +586,8 @@ fn real_main() -> ExitCode {
     for tgt in &run_targets {
         match executor.execute(tgt) {
             Ok(stats) => {
-                if question {
-                    if stats.targets_rebuilt > 0 {
-                        return ExitCode::from(1);
-                    }
+                if question && stats.targets_rebuilt > 0 {
+                    return ExitCode::from(1);
                 }
 
                 // GNU make's messages when no recipe ran for a goal.

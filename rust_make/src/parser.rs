@@ -262,8 +262,7 @@ fn eval_inner(
     ];
 
     for &func in &known_functions {
-        if trimmed.starts_with(func) {
-            let remainder = &trimmed[func.len()..];
+        if let Some(remainder) = trimmed.strip_prefix(func) {
             if remainder.is_empty() || remainder.starts_with(char::is_whitespace) {
                 let args_raw = remainder.trim_start();
                 return eval_function(
@@ -319,7 +318,7 @@ fn eval_function(
             if args.len() < 2 {
                 return String::new();
             }
-            let find = ex(&args[0]);
+            let find = ex(args[0]);
             let within = ex(&args[1..].join(","));
             if within.contains(find.as_str()) {
                 find
@@ -457,11 +456,8 @@ fn eval_function(
             if args.len() < 3 {
                 return String::new();
             }
-            let names: Vec<String> = ex(&args[0])
-                .split_whitespace()
-                .map(str::to_string)
-                .collect();
-            let words_s = ex(&args[1]);
+            let names: Vec<String> = ex(args[0]).split_whitespace().map(str::to_string).collect();
+            let words_s = ex(args[1]);
             let words: Vec<&str> = words_s.split_whitespace().collect();
             let mut scope = scoped_vars.cloned().unwrap_or_default();
             for (i, n) in names.iter().enumerate() {
@@ -615,7 +611,7 @@ fn eval_function(
                     depth,
                 );
                 let text = expand_variables_internal(
-                    &args[2..].join(",").trim(),
+                    args[2..].join(",").trim(),
                     makefile,
                     target,
                     prereqs,
@@ -671,7 +667,7 @@ fn eval_function(
                     depth,
                 );
                 let text = expand_variables_internal(
-                    &args[1..].join(",").trim(),
+                    args[1..].join(",").trim(),
                     makefile,
                     target,
                     prereqs,
@@ -695,7 +691,7 @@ fn eval_function(
                     depth,
                 );
                 let text = expand_variables_internal(
-                    &args[1..].join(",").trim(),
+                    args[1..].join(",").trim(),
                     makefile,
                     target,
                     prereqs,
@@ -739,7 +735,7 @@ fn eval_function(
                     depth,
                 );
                 let text = expand_variables_internal(
-                    &args[1..].join(",").trim(),
+                    args[1..].join(",").trim(),
                     makefile,
                     target,
                     prereqs,
@@ -763,7 +759,7 @@ fn eval_function(
                     depth,
                 );
                 let text = expand_variables_internal(
-                    &args[1..].join(",").trim(),
+                    args[1..].join(",").trim(),
                     makefile,
                     target,
                     prereqs,
@@ -787,7 +783,7 @@ fn eval_function(
                     depth,
                 );
                 let list2 = expand_variables_internal(
-                    &args[1..].join(",").trim(),
+                    args[1..].join(",").trim(),
                     makefile,
                     target,
                     prereqs,
@@ -811,7 +807,7 @@ fn eval_function(
                     depth,
                 );
                 let text = expand_variables_internal(
-                    &args[1..].join(",").trim(),
+                    args[1..].join(",").trim(),
                     makefile,
                     target,
                     prereqs,
@@ -879,7 +875,7 @@ fn eval_function(
                     }
                 } else if args.len() > 2 {
                     expand_variables_internal(
-                        &args[2..].join(",").trim(),
+                        args[2..].join(",").trim(),
                         makefile,
                         target,
                         prereqs,
@@ -1546,9 +1542,7 @@ fn expand_wildcard(pattern: &str) -> Vec<String> {
                             format!("{base}/{fname_str}")
                         };
 
-                        if is_last {
-                            next_paths.push(path_str);
-                        } else if entry.path().is_dir() {
+                        if is_last || entry.path().is_dir() {
                             next_paths.push(path_str);
                         }
                     }
@@ -1647,9 +1641,9 @@ pub fn parse_makefile_into(
             || trimmed.starts_with("ifdef")
             || trimmed.starts_with("ifndef")
         {
-            let currently_active = cond_stack.last().map_or(true, |(act, _)| *act);
+            let currently_active = cond_stack.last().is_none_or(|(act, _)| *act);
             let branch_result = if currently_active {
-                eval_condition(trimmed, &makefile)
+                eval_condition(trimmed, makefile)
             } else {
                 false
             };
@@ -1657,14 +1651,14 @@ pub fn parse_makefile_into(
             continue;
         } else if trimmed == "else" || trimmed.starts_with("else ") {
             if let Some((_act, matched)) = cond_stack.pop() {
-                let parent_active = cond_stack.last().map_or(true, |(p_act, _)| *p_act);
+                let parent_active = cond_stack.last().is_none_or(|(p_act, _)| *p_act);
                 if trimmed == "else" {
                     let new_active = parent_active && !matched;
                     cond_stack.push((new_active, matched || new_active));
                 } else {
                     let sub_cond = trimmed[5..].trim();
                     let sub_res = if parent_active && !matched {
-                        eval_condition(sub_cond, &makefile)
+                        eval_condition(sub_cond, makefile)
                     } else {
                         false
                     };
@@ -1692,8 +1686,8 @@ pub fn parse_makefile_into(
             continue;
         }
 
-        if trimmed.starts_with("define ") {
-            let def_header = trimmed[7..].trim();
+        if let Some(def_header) = trimmed.strip_prefix("define ") {
+            let def_header = def_header.trim();
             let (var_name, is_immediate) = if let Some(eq_pos) = def_header.find('=') {
                 let name = def_header[..eq_pos].trim();
                 let imm = name.ends_with(':');
@@ -1789,15 +1783,14 @@ pub fn parse_makefile_into(
             || trimmed.starts_with("sinclude ")
         {
             let is_optional = trimmed.starts_with('-') || trimmed.starts_with("sinclude");
+            // "include " is 8 bytes; "-include " and "sinclude " are 9.
             let prefix_len = if trimmed.starts_with("include ") {
                 8
-            } else if trimmed.starts_with("-include ") {
-                9
             } else {
                 9
             };
             let files_str = trimmed[prefix_len..].trim();
-            let expanded_files = expand_variables(files_str, &makefile, None, &[]);
+            let expanded_files = expand_variables(files_str, makefile, None, &[]);
 
             for inc_token in expanded_files.split_whitespace() {
                 let candidates = if inc_token.contains('*')
@@ -1902,7 +1895,7 @@ pub fn parse_makefile_into(
                 makefile.clear_all_vpaths();
             } else {
                 let rest = effective_line[6..].trim();
-                let expanded_rest = expand_variables(rest, &makefile, None, &[]);
+                let expanded_rest = expand_variables(rest, makefile, None, &[]);
                 let mut parts = expanded_rest.split_whitespace();
                 if let Some(pattern) = parts.next() {
                     let dirs: Vec<String> = parts
@@ -1938,10 +1931,10 @@ pub fn parse_makefile_into(
                     var_part_raw
                 };
 
-                let clean_var = if var_name.starts_with("override ") {
-                    var_name[9..].trim()
-                } else if var_name.starts_with("export ") {
-                    var_name[7..].trim()
+                let clean_var = if let Some(v) = var_name.strip_prefix("override ") {
+                    v.trim()
+                } else if let Some(v) = var_name.strip_prefix("export ") {
+                    v.trim()
                 } else {
                     var_name
                 };
@@ -2290,14 +2283,12 @@ pub fn parse_makefile_into(
 
 fn eval_condition(line: &str, makefile: &Makefile) -> bool {
     let trimmed = line.trim();
-    if trimmed.starts_with("ifdef ") {
-        let var = trimmed[6..].trim();
-        return makefile
-            .get_var(var)
-            .map_or(false, |v| !v.trim().is_empty());
-    } else if trimmed.starts_with("ifndef ") {
-        let var = trimmed[7..].trim();
-        return makefile.get_var(var).map_or(true, |v| v.trim().is_empty());
+    if let Some(var) = trimmed.strip_prefix("ifdef ") {
+        let var = var.trim();
+        return makefile.get_var(var).is_some_and(|v| !v.trim().is_empty());
+    } else if let Some(var) = trimmed.strip_prefix("ifndef ") {
+        let var = var.trim();
+        return makefile.get_var(var).is_none_or(|v| v.trim().is_empty());
     }
 
     let is_eq = trimmed.starts_with("ifeq");

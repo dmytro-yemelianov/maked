@@ -91,7 +91,7 @@ pub fn generate_compilation_database(
 
             let first = tokens[0];
             let is_cc = is_compiler_command(first);
-            let has_compile_flag = tokens.iter().any(|&t| t == "-c");
+            let has_compile_flag = tokens.contains(&"-c");
 
             // Look for source file
             let mut source_file = None;

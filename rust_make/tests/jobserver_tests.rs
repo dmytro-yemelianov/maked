@@ -43,8 +43,8 @@ fn test_recursive_submake_jobserver_coordination() {
     let top_mf = temp_dir.join("Makefile");
     let mut f = File::create(&top_mf).unwrap();
     writeln!(f, "all: job1 job2").unwrap();
-    writeln!(f, "job1:\n\t@\"{}\" -C sub1", maked).unwrap();
-    writeln!(f, "job2:\n\t@\"{}\" -C sub2", maked).unwrap();
+    writeln!(f, "job1:\n\t@\"{maked}\" -C sub1").unwrap();
+    writeln!(f, "job2:\n\t@\"{maked}\" -C sub2").unwrap();
 
     let output = Command::new(&maked)
         .arg("-C")
@@ -106,7 +106,7 @@ fn test_maked_under_gnu_make_jobserver() {
     // Top-level Makefile executed by GNU Make with -j4
     let top_mf = temp_dir.join("Makefile");
     let mut f = File::create(&top_mf).unwrap();
-    writeln!(f, "all:\n\t@\"{}\" -C sub", maked).unwrap();
+    writeln!(f, "all:\n\t@\"{maked}\" -C sub").unwrap();
 
     let output = Command::new(gmake)
         .arg("-C")

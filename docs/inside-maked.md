@@ -455,8 +455,6 @@ microcontrollers would be a different product.
   hosts, use an SSH tunnel or a VPN.
 - The jobserver and remote workers are Unix-only. On Windows, recipes run
   via `$SHELL` or `cmd.exe`.
-- Clippy reports about 50 lints. CI shows them but does not yet fail on
-  them.
 - The macOS binaries are not notarized.
 - No refinement proof connects the Lean model and the Rust code. Two
   fuzzers are the bridge: one for rebuild decisions and one for schedules.

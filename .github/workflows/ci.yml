@@ -38,9 +38,8 @@ jobs:
       - name: Format
         run: cargo fmt --manifest-path rust_make/Cargo.toml --check
 
-      - name: Clippy (advisory)
-        # 52 pre-existing lints; reported, not yet gating.
-        run: cargo clippy --manifest-path rust_make/Cargo.toml --all-targets 2>&1 | tee clippy.log; echo "::notice title=clippy::$(grep -c '^warning' clippy.log || true) warning lines"
+      - name: Clippy
+        run: cargo clippy --manifest-path rust_make/Cargo.toml --all-targets -- -D warnings
 
       - name: Test
         run: cargo test --manifest-path rust_make/Cargo.toml
