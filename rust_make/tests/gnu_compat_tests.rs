@@ -516,6 +516,20 @@ fn included_makefiles_are_remade_and_reread() {
 }
 
 #[test]
+fn variable_flavors_overrides_and_target_specific_inheritance() {
+    // Found by benchmarks/fuzzer/directive_fuzz.py.
+    let mf = "S := s\nS += $(LATE)\nLATE = late\nR = r\nR += $(LATE)\n\
+              override O = file\nO = ignored\nP ?= dflt\n\
+              define D +=\nline\nendef\ndefine D2 :=\n$(S)\nendef\n\
+              all: top\n\t@echo 'all [$(S)] [$(R)] [$(O)] [$(origin O)] [$(flavor S)] [$(flavor R)] [$(P)]'\n\
+              top: V := 1 2\ntop: dep\n\t@echo 'top [$(V)] [$(D2)]'\n\
+              dep: V += dep\ndep: x.pp\n\t@echo 'dep [$(V)]'\n\
+              %.pp: W := pat  \nx.pp:\n\t@echo 'x.pp [$(V)] [$(W)]'\n";
+    assert_same(&[("Makefile", mf)], &[]);
+    assert_same(&[("Makefile", mf)], &["O=cli", "P=cli", "V=cli"]);
+}
+
+#[test]
 fn expression_whitespace_and_function_semantics() {
     // Each line is a GNU make rule maked got wrong until the expression
     // fuzzer (benchmarks/fuzzer/expr_fuzz.py) compared them.

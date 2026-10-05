@@ -1629,6 +1629,8 @@ impl<'a> Executor<'a> {
 
     pub fn execute(&self, root: &str) -> Result<ExecutionStats, ExecutionError> {
         crate::ast::enter_execution_phase();
+        // Which target each one inherits target-specific variables from.
+        self.makefile.record_inheritance(root);
         // mtimes from a previous run in this process may be stale.
         if let Some(cache) = MTIMES.get() {
             cache.lock().unwrap().clear();

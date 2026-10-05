@@ -87,7 +87,6 @@ Known differences from GNU make:
   then the recipes in order. GNU make runs each as a separate rule.
 - An order-only prerequisite (`t: a | dir`) that is missing is built like a
   normal one. One that exists is ignored.
-- `$(flavor)` guesses: a value containing `$` is reported as recursive.
 - `$(eval)` during the build applies only variable assignments. New rules
   can only come from `$(eval)` while the makefile is read.
 - A backslash-newline in a recipe is joined into one line before reaching

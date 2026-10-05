@@ -2,6 +2,16 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+/// One target- or pattern-specific assignment.
+#[derive(Debug, Clone)]
+pub struct TargetVarOp {
+    pub name: String,
+    /// `=` (recursive), `:` (simple, already expanded), `+` or `?`.
+    pub kind: char,
+    pub value: String,
+    pub is_override: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
     pub target: String,
@@ -32,9 +42,23 @@ pub struct Makefile {
     pub pattern_rules: Vec<PatternRule>,
     pub variables: crate::fxhash::FxHashMap<String, String>,
     pub cli_overrides: HashSet<String>,
+    /// Variables whose value was expanded when set (`:=`, `::=`): read as
+    /// is, never expanded again; `+=` expands the new text at once.
+    pub simple_vars: crate::fxhash::FxHashSet<String>,
+    /// Set with `override`: later plain assignments are ignored, and the
+    /// origin is "override".
+    pub override_vars: crate::fxhash::FxHashSet<String>,
     pub default_target: Option<String>,
     pub vpath_directives: Vec<VpathDirective>,
-    pub target_variables: HashMap<String, HashMap<String, String>>,
+    /// Target- and pattern-specific assignments, in the order written,
+    /// applied when a variable is read for that target (`get_target_var`).
+    pub target_variables: HashMap<String, Vec<TargetVarOp>>,
+    /// Names assigned by any target- or pattern-specific line: lookups of
+    /// other names skip the per-target chain.
+    pub target_var_names: crate::fxhash::FxHashSet<String>,
+    /// The target each target inherits target-specific variables from: the
+    /// one that first asked for it (`record_inheritance`).
+    pub inherit_parent: Arc<Mutex<crate::fxhash::FxHashMap<String, String>>>,
     pub has_second_expansion: bool,
     pub eval_queue: Arc<Mutex<Vec<String>>>,
     /// `export NAME` (true) / `unexport NAME` (false).
@@ -142,6 +166,8 @@ impl Makefile {
             pattern_rules: Vec::new(),
             variables: Default::default(),
             cli_overrides: HashSet::new(),
+            simple_vars: Default::default(),
+            override_vars: Default::default(),
             default_target: None,
             vpath_directives: Vec::new(),
             exported: HashMap::new(),
@@ -154,6 +180,8 @@ impl Makefile {
             rule_cache: Arc::new(Mutex::new(crate::fxhash::FxHashMap::default())),
             implicit_stems: Default::default(),
             target_variables: HashMap::new(),
+            target_var_names: Default::default(),
+            inherit_parent: Default::default(),
             has_second_expansion: false,
             eval_queue: Arc::new(Mutex::new(Vec::new())),
         };
@@ -267,8 +295,38 @@ impl Makefile {
     }
 
     /// `override VAR = value`: set even over a command-line definition.
-    pub fn set_var_override(&mut self, key: String, val: String) {
+    pub fn set_var_override(&mut self, key: String, val: String, simple: bool) {
+        self.override_vars.insert(key.clone());
         self.defaults.remove(&key);
+        self.set_flavor(&key, simple);
+        self.variables.insert(key, val);
+    }
+
+    fn set_flavor(&mut self, key: &str, simple: bool) {
+        if simple {
+            self.simple_vars.insert(key.to_string());
+        } else {
+            self.simple_vars.remove(key);
+        }
+    }
+
+    /// A plain assignment cannot change a command-line or `override` variable.
+    pub fn is_protected(&self, key: &str) -> bool {
+        self.cli_overrides.contains(key) || self.override_vars.contains(key)
+    }
+
+    /// True for `:=` variables, whose values are not expanded again.
+    pub fn is_simple(&self, key: &str) -> bool {
+        self.simple_vars.contains(key)
+    }
+
+    /// `VAR := value` (already expanded).
+    pub fn set_simple_var(&mut self, key: String, val: String) {
+        if self.is_protected(&key) {
+            return;
+        }
+        self.defaults.remove(&key);
+        self.set_flavor(&key, true);
         self.variables.insert(key, val);
     }
 
@@ -320,15 +378,22 @@ impl Makefile {
         RecipeEnv { shell, set, unset }
     }
 
+    /// `VAR = value` (recursive: expanded each time it is used).
     pub fn set_var(&mut self, key: String, val: String) {
-        if self.cli_overrides.contains(&key) {
+        if self.is_protected(&key) {
             return;
         }
         self.defaults.remove(&key);
+        self.set_flavor(&key, false);
         self.variables.insert(key, val);
     }
 
     pub fn set_cli_var(&mut self, key: String, val: String) {
+        // Command-line variables are applied again for every included or
+        // eval'd text; an `override` in the makefile still wins.
+        if self.override_vars.contains(&key) {
+            return;
+        }
         self.cli_overrides.insert(key.clone());
         self.defaults.remove(&key);
         self.variables.insert(key, val);
@@ -378,29 +443,100 @@ impl Makefile {
         }
     }
 
-    pub fn set_target_var(&mut self, target: String, key: String, val: String) {
-        self.target_variables
-            .entry(target)
-            .or_default()
-            .insert(key, val);
+    /// Record `target: [override] NAME op value` (op `=`, `:`, `+` or `?`).
+    pub fn add_target_var(&mut self, target: String, op: TargetVarOp) {
+        self.target_var_names.insert(op.name.clone());
+        self.target_variables.entry(target).or_default().push(op);
     }
 
+    /// The value of `key` for `target`, if a target- or pattern-specific
+    /// assignment applies to it or to a target it inherits from. As in GNU
+    /// make, the value is built up from the global value, then the
+    /// inherited chain, then matching patterns, then the target's own
+    /// assignments; `+=` appends to what is below it, and a command-line
+    /// variable wins unless the assignment says `override`.
     pub fn get_target_var(&self, target: &str, key: &str) -> Option<String> {
-        // 1. Exact target match
-        if let Some(m) = self.target_variables.get(target) {
-            if let Some(v) = m.get(key) {
-                return Some(v.clone());
-            }
+        if !self.target_var_names.contains(key) {
+            return None;
         }
-        // 2. Pattern-specific target match (e.g. %.o)
-        for (pat, vars) in &self.target_variables {
-            if pat.contains('%') && match_pattern(pat, target).is_some() {
-                if let Some(v) = vars.get(key) {
-                    return Some(v.clone());
+        let (v, touched) = self.target_value(target, key, 0);
+        if touched { v } else { None }
+    }
+
+    fn target_value(&self, target: &str, key: &str, depth: usize) -> (Option<String>, bool) {
+        let parent = if depth < 256 {
+            self.inherit_parent.lock().unwrap().get(target).cloned()
+        } else {
+            None
+        };
+        let (mut v, mut touched) = match parent {
+            Some(p) => {
+                let (pv, pt) = self.target_value(&p, key, depth + 1);
+                if pt {
+                    (pv, true)
+                } else {
+                    (self.get_var(key), false)
                 }
             }
+            None => (self.get_var(key), false),
+        };
+        let cli = self.cli_overrides.contains(key);
+        let mut apply = |op: &TargetVarOp| {
+            if op.name != key || (cli && !op.is_override) {
+                return;
+            }
+            touched = true;
+            v = match op.kind {
+                '+' => Some(match v.take() {
+                    Some(prev) if !prev.is_empty() => format!("{prev} {}", op.value),
+                    _ => op.value.clone(),
+                }),
+                '?' if v.is_some() => v.take(),
+                _ => Some(op.value.clone()),
+            };
+        };
+        for (pat, ops) in &self.target_variables {
+            if pat.contains('%') && match_pattern(pat, target).is_some() {
+                ops.iter().for_each(&mut apply);
+            }
         }
-        None
+        if let Some(ops) = self.target_variables.get(target) {
+            ops.iter().for_each(&mut apply);
+        }
+        (v, touched)
+    }
+
+    /// Before a build: record, for every target reachable from `root`, the
+    /// target that first asks for it, in GNU make's depth-first order. Its
+    /// target-specific variables are inherited.
+    pub fn record_inheritance(&self, root: &str) {
+        if self.target_variables.is_empty() {
+            return;
+        }
+        let mut parents = self.inherit_parent.lock().unwrap();
+        let mut seen: crate::fxhash::FxHashSet<String> = Default::default();
+        seen.insert(root.to_string());
+        let mut stack: Vec<(String, Vec<String>, usize)> = Vec::new();
+        let prereqs_of = |t: &str| {
+            self.get_rule(t)
+                .map(|r| r.prereqs.clone())
+                .unwrap_or_default()
+        };
+        stack.push((root.to_string(), prereqs_of(root), 0));
+        while let Some((node, deps, i)) = stack.last_mut() {
+            if *i >= deps.len() {
+                stack.pop();
+                continue;
+            }
+            let dep = deps[*i].clone();
+            *i += 1;
+            let node = node.clone();
+            if seen.insert(dep.clone()) {
+                parents.entry(dep.clone()).or_insert(node);
+                let next = prereqs_of(&dep);
+                stack.push((dep, next, 0));
+            }
+        }
     }
 
     pub fn expand_prerequisites(&self, target: &str, raw_prereqs: &[String]) -> Vec<String> {

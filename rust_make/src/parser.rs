@@ -217,7 +217,11 @@ fn eval_inner(
         {
             expand_variables_internal(&val, makefile, target, prereqs, scoped_vars, depth)
         } else if let Some(val) = makefile.get_var(&expanded_var_name) {
-            expand_variables_internal(&val, makefile, target, prereqs, scoped_vars, depth)
+            if makefile.is_simple(&expanded_var_name) {
+                val
+            } else {
+                expand_variables_internal(&val, makefile, target, prereqs, scoped_vars, depth)
+            }
         } else {
             String::new()
         };
@@ -308,7 +312,7 @@ fn eval_inner(
         .or_else(|| makefile.get_var(&var_name));
 
     if let Some(val) = val_opt {
-        if val.contains('$') {
+        if val.contains('$') && !makefile.is_simple(&var_name) {
             expand_variables_internal(&val, makefile, target, prereqs, scoped_vars, depth)
         } else {
             val
@@ -384,6 +388,8 @@ fn eval_function(
             let name = name.trim();
             if automatic_var(name, makefile, None, &[]).is_some() && name.len() <= 2 {
                 "automatic".to_string()
+            } else if makefile.override_vars.contains(name) {
+                "override".to_string()
             } else if makefile.cli_overrides.contains(name) {
                 "command line".to_string()
             } else if makefile.defaults.contains(name) {
@@ -401,14 +407,12 @@ fn eval_function(
             }
         }
         "flavor" => {
-            // maked stores `=` values raw and `:=` values expanded but does
-            // not record which; a value with `$` is reported as recursive.
             let name = ex(args_raw);
             let name = name.trim();
             match makefile.get_var(name) {
                 None => "undefined".to_string(),
-                Some(v) if v.contains('$') => "recursive".to_string(),
-                Some(_) => "simple".to_string(),
+                Some(_) if makefile.is_simple(name) => "simple".to_string(),
+                Some(_) => "recursive".to_string(),
             }
         }
         "file" => {
@@ -1796,18 +1800,23 @@ pub fn parse_makefile_into(
 
         if let Some(def_header) = trimmed.strip_prefix("define ") {
             let def_header = def_header.trim();
-            let (var_name, is_immediate) = if let Some(eq_pos) = def_header.find('=') {
-                let name = def_header[..eq_pos].trim();
-                let imm = name.ends_with(':');
-                let clean_name = if imm {
-                    name[..name.len() - 1].trim()
-                } else {
-                    name
-                };
-                (clean_name.to_string(), imm)
-            } else {
-                (def_header.to_string(), false)
+            // `define NAME`, or with an operator: `=`, `:=`, `::=`, `+=`, `?=`.
+            let (var_name, op) = match def_header.strip_suffix('=') {
+                Some(h) => {
+                    let h = h.trim_end();
+                    if let Some(n) = h.strip_suffix("::").or_else(|| h.strip_suffix(':')) {
+                        (n.trim_end().to_string(), ':')
+                    } else if let Some(n) = h.strip_suffix('+') {
+                        (n.trim_end().to_string(), '+')
+                    } else if let Some(n) = h.strip_suffix('?') {
+                        (n.trim_end().to_string(), '?')
+                    } else {
+                        (h.to_string(), '=')
+                    }
+                }
+                None => (def_header.to_string(), '='),
             };
+            let is_immediate = op == ':';
             let mut def_body = Vec::new();
             while line_idx < combined_lines.len() {
                 let (_, ref dline) = combined_lines[line_idx];
@@ -1818,12 +1827,30 @@ pub fn parse_makefile_into(
                 def_body.push(dline.replace(CONTINUATION, "\\\n"));
             }
             let full_val = def_body.join("\n");
-            let final_val = if is_immediate {
-                expand_variables(&full_val, makefile, None, &[])
-            } else {
-                full_val
-            };
-            makefile.set_var(var_name, final_val);
+            match op {
+                '?' if makefile.get_var(&var_name).is_some() => {}
+                '+' if makefile.get_var(&var_name).is_some() => {
+                    let simple = makefile.is_simple(&var_name);
+                    let text = if simple {
+                        expand_variables(&full_val, makefile, None, &[])
+                    } else {
+                        full_val
+                    };
+                    // GNU make joins the old value and the new text with a newline.
+                    let prev = makefile.get_var(&var_name).unwrap_or_default();
+                    let joined = format!("{prev}\n{text}");
+                    if simple {
+                        makefile.set_simple_var(var_name, joined);
+                    } else {
+                        makefile.set_var(var_name, joined);
+                    }
+                }
+                _ if is_immediate => {
+                    let v = expand_variables(&full_val, makefile, None, &[]);
+                    makefile.set_simple_var(var_name, v);
+                }
+                _ => makefile.set_var(var_name, full_val),
+            }
             current_target = None;
             continue;
         }
@@ -2054,32 +2081,31 @@ pub fn parse_makefile_into(
                 if !clean_var.is_empty() && !clean_var.contains(char::is_whitespace) {
                     let target_part = effective_line[..cp].trim();
                     let expanded_targets_str = expand_variables(target_part, makefile, None, &[]);
-                    let raw_val = after_colon[sub_eq + 1..].trim();
+                    // The value keeps trailing whitespace (see `full`).
+                    let value_start =
+                        after_colon.as_ptr() as usize - full.as_ptr() as usize + sub_eq + 1;
+                    let raw_val = full[value_start..].trim_start();
+                    let is_override = var_name.starts_with("override ");
 
                     for tgt in expanded_targets_str.split_whitespace() {
-                        let val = if is_imm {
-                            expand_variables(raw_val, makefile, Some(tgt), &[])
+                        let (kind, value) = if is_imm {
+                            (':', expand_variables(raw_val, makefile, Some(tgt), &[]))
                         } else if is_app {
-                            let prev = makefile
-                                .get_target_var(tgt, clean_var)
-                                .or_else(|| makefile.get_var(clean_var))
-                                .unwrap_or_default();
-                            if prev.is_empty() {
-                                raw_val.to_string()
-                            } else {
-                                format!("{prev} {raw_val}")
-                            }
+                            ('+', raw_val.to_string())
                         } else if is_cond {
-                            if makefile.get_target_var(tgt, clean_var).is_some()
-                                || makefile.get_var(clean_var).is_some()
-                            {
-                                continue;
-                            }
-                            raw_val.to_string()
+                            ('?', raw_val.to_string())
                         } else {
-                            raw_val.to_string()
+                            ('=', raw_val.to_string())
                         };
-                        makefile.set_target_var(tgt.to_string(), clean_var.to_string(), val);
+                        makefile.add_target_var(
+                            tgt.to_string(),
+                            crate::ast::TargetVarOp {
+                                name: clean_var.to_string(),
+                                kind,
+                                value,
+                                is_override,
+                            },
+                        );
                     }
                     current_target = None;
                     process_pending_evals(makefile, cli_vars)?;
@@ -2122,38 +2148,52 @@ pub fn parse_makefile_into(
                     makefile.exported.insert(key.clone(), true);
                 }
 
-                if is_cond && makefile.get_var(&key).is_some() {
-                    current_target = None;
-                    continue;
-                }
-
-                // `+=` on a variable the makefile already holds: append in
-                // place. Rebuilding the string each time is quadratic, and
-                // git's coccinelle rules do ~11,000 appends to 20 variables.
-                if is_append
-                    && (force_override || !makefile.cli_overrides.contains(&key))
-                    && makefile.append_in_place(&key, raw_val)
+                // A command-line or `override` variable ignores plain
+                // assignments, `+=` included (GNU make).
+                if (is_cond && makefile.get_var(&key).is_some())
+                    || (!force_override && makefile.is_protected(&key))
                 {
                     current_target = None;
                     process_pending_evals(makefile, cli_vars)?;
                     continue;
                 }
 
+                // `+=` keeps the variable's flavor: a simple variable gets
+                // the new text expanded now, a recursive one gets it as is.
+                let simple_append = is_append && makefile.is_simple(&key);
+                let append_text = if simple_append {
+                    std::borrow::Cow::Owned(expand_variables(raw_val, makefile, None, &[]))
+                } else {
+                    std::borrow::Cow::Borrowed(raw_val)
+                };
+
+                // `+=` on a variable the makefile already holds: append in
+                // place. Rebuilding the string each time is quadratic, and
+                // git's coccinelle rules do ~11,000 appends to 20 variables.
+                if is_append && makefile.append_in_place(&key, &append_text) {
+                    current_target = None;
+                    process_pending_evals(makefile, cli_vars)?;
+                    continue;
+                }
+
+                let simple = is_immediate || simple_append;
                 let val = if is_immediate {
                     expand_variables(raw_val, makefile, None, &[])
                 } else if is_append {
                     let prev = makefile.get_var(&key).unwrap_or_default();
                     if prev.is_empty() {
-                        raw_val.to_string()
+                        append_text.into_owned()
                     } else {
-                        format!("{prev} {raw_val}")
+                        format!("{prev} {append_text}")
                     }
                 } else {
                     raw_val.to_string()
                 };
 
                 if force_override {
-                    makefile.set_var_override(key, val);
+                    makefile.set_var_override(key, val, simple);
+                } else if simple {
+                    makefile.set_simple_var(key, val);
                 } else {
                     makefile.set_var(key, val);
                 }
