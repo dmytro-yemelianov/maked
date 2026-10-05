@@ -30,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / "benchmarks/realworld/.cache"
-MAKED = ROOT / "rust_make/target/release/maked"
+MAKED = Path(os.environ.get("MAKED_BIN", ROOT / "rust_make/target/release/maked"))
 GMAKE = shutil.which("gmake") or shutil.which("make")
 JOBS = "-j8"
 IS_MAC = platform.system() == "Darwin"

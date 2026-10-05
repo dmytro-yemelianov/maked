@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parents[2]
-MAKED_BIN = WORKSPACE / "rust_make/target/release/maked"
+MAKED_BIN = Path(os.environ.get("MAKED_BIN", WORKSPACE / "rust_make/target/release/maked"))
 GMAKE_BIN = Path("/opt/homebrew/bin/gmake") if Path("/opt/homebrew/bin/gmake").exists() else Path("/usr/bin/make")
 LEAN_MAKE_BIN = WORKSPACE / "lean_make/.lake/build/bin/lean_make"
 

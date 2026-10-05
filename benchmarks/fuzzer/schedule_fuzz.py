@@ -18,6 +18,7 @@ definitions in lean_make/LeanMake/Scheduling.lean. Every schedule must be:
 It also feeds the checker schedules that break each rule, so a checker that
 accepts everything fails the run.
 """
+import os
 import json
 import random
 import subprocess
@@ -26,7 +27,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MAKED = ROOT / "rust_make/target/release/maked"
+MAKED = Path(os.environ.get("MAKED_BIN", ROOT / "rust_make/target/release/maked"))
 LEAN = ROOT / "lean_make/.lake/build/bin/lean_make"
 
 # Dispatch allowance per job, in microseconds: the time between a job's

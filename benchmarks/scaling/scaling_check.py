@@ -11,6 +11,7 @@ results, not maked's running time.
 
 Usage: scaling_check.py [--n N] [--limit X] [--only SHAPE]
 """
+import os
 import argparse
 import shutil
 import subprocess
@@ -20,7 +21,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MAKED = ROOT / "rust_make/target/release/maked"
+MAKED = Path(os.environ.get("MAKED_BIN", ROOT / "rust_make/target/release/maked"))
 
 
 def chain(n):

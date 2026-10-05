@@ -62,6 +62,9 @@ jobs:
       - name: Differential fuzzer (maked vs GNU make vs Lean model; -q, -t, recipe-less rules)
         run: python3 benchmarks/fuzzer/fuzz_runner.py 200
 
+      - name: Expression fuzzer (functions, substitution refs, conditionals vs GNU make)
+        run: python3 benchmarks/fuzzer/expr_fuzz.py 500
+
       - name: Pattern-rule fuzzer (maked vs GNU make vs Lean Pattern spec, subdirectories)
         run: python3 benchmarks/fuzzer/pattern_fuzz.py 300
 

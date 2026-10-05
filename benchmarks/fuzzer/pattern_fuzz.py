@@ -13,6 +13,7 @@ rules are off (-r) in both makes.
 maked v0.2.1 matched patterns against the whole path; the existing fuzzers
 never generated a pattern rule or a subdirectory, so nothing caught it.
 """
+import os
 import random
 import shutil
 import subprocess
@@ -21,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MAKED = ROOT / "rust_make/target/release/maked"
+MAKED = Path(os.environ.get("MAKED_BIN", ROOT / "rust_make/target/release/maked"))
 LEAN = ROOT / "lean_make/.lake/build/bin/lean_make"
 GMAKE = shutil.which("gmake") or shutil.which("make")
 

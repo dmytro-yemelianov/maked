@@ -14,6 +14,7 @@ Checks:
 Included files converge: a recipe writes fixed content, and only when the
 file is missing or different, so make restarts a bounded number of times.
 """
+import os
 import random
 import shutil
 import subprocess
@@ -23,7 +24,7 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MAKED = ROOT / "rust_make/target/release/maked"
+MAKED = Path(os.environ.get("MAKED_BIN", ROOT / "rust_make/target/release/maked"))
 GMAKE = shutil.which("gmake") or shutil.which("make")
 
 
