@@ -1,6 +1,6 @@
 # Inside maked: a make in Rust, a model in Lean, and the benchmark that lied
 
-*Dmytro Yemelianov · October 2026 · [maked v0.2.3](https://github.com/dmytro-yemelianov/maked/releases/tag/v0.2.3)*
+*Dmytro Yemelianov · October 2026 · [maked v0.2.4](https://github.com/dmytro-yemelianov/maked/releases/tag/v0.2.4)*
 
 maked ("make + ed: Yemelianov (Emelyanov) Dmytro") is a POSIX make (IEEE Std 1003.1) with
 the GNU extensions people actually use. It is written in Rust with zero
