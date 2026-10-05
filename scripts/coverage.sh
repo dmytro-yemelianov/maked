@@ -45,6 +45,7 @@ log "fuzzers"
 python3 benchmarks/fuzzer/fuzz_runner.py 100 | tail -1
 python3 benchmarks/fuzzer/expr_fuzz.py 300 | tail -1
 python3 benchmarks/fuzzer/directive_fuzz.py 200 | tail -1
+python3 benchmarks/fuzzer/options_fuzz.py 300 | tail -1
 python3 benchmarks/fuzzer/pattern_fuzz.py 150 | tail -1
 python3 benchmarks/fuzzer/remake_fuzz.py 80 | tail -1
 python3 benchmarks/fuzzer/cache_fuzz.py 5 | tail -1

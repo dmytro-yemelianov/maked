@@ -68,6 +68,9 @@ jobs:
       - name: Directive fuzzer (define, else-if, target/pattern variables, override, vpath, include)
         run: python3 benchmarks/fuzzer/directive_fuzz.py 300
 
+      - name: Options fuzzer (-n -k -i -B -s -e -t -j, several goals, failing recipes)
+        run: python3 benchmarks/fuzzer/options_fuzz.py 400
+
       - name: Pattern-rule fuzzer (maked vs GNU make vs Lean Pattern spec, subdirectories)
         run: python3 benchmarks/fuzzer/pattern_fuzz.py 300
 
